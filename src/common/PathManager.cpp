@@ -1,0 +1,531 @@
+#include "PathManager.h"
+
+#include <system_error>
+#include <algorithm>
+#include <optional>
+#include <sstream>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+PathManager::PathManager(const std::string& root)
+{
+    std::error_code error;
+
+    fs::create_directories(root, error);
+
+    rootDirectory = fs::weakly_canonical(root, error);
+
+    if (error) {
+        rootDirectory = fs::absolute(root).lexically_normal();
+    }
+
+    currentDirectory = rootDirectory;
+}
+
+bool PathManager::isInsideRoot(const fs::path& path) const
+{
+    const fs::path normalizedPath =
+        path.lexically_normal();
+
+    auto rootIterator = rootDirectory.begin();
+    auto pathIterator = normalizedPath.begin();
+
+    while (rootIterator != rootDirectory.end()) {
+        if (
+            pathIterator == normalizedPath.end()
+            || *rootIterator != *pathIterator
+        ) {
+            return false;
+        }
+
+        ++rootIterator;
+        ++pathIterator;
+    }
+
+    return true;
+}
+
+fs::path PathManager::resolvePath(
+    const std::string& input
+) const {
+    if (input.empty()) {
+        return currentDirectory;
+    }
+
+    fs::path requestedPath(input);
+    fs::path result;
+
+    if (requestedPath.is_absolute()) {
+        result =
+            rootDirectory
+            / requestedPath.relative_path();
+    }
+    else {
+        result = currentDirectory / requestedPath;
+    }
+
+    return result.lexically_normal();
+}
+
+bool PathManager::changeDirectory(
+    const std::string& path
+) {
+    std::error_code error;
+
+    const fs::path target = resolvePath(path);
+
+    if (!isInsideRoot(target)) {
+        return false;
+    }
+
+    if (
+        !fs::exists(target, error)
+        || error
+        || !fs::is_directory(target, error)
+        || error
+    ) {
+        return false;
+    }
+
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (error || !isInsideRoot(canonicalTarget)) {
+        return false;
+    }
+
+    currentDirectory = canonicalTarget;
+    return true;
+}
+
+bool PathManager::changeToParentDirectory()
+{
+    if (currentDirectory == rootDirectory) {
+        return false;
+    }
+
+    return changeDirectory("..");
+}
+
+std::string PathManager::getCurrentFTPPath() const
+{
+    if (currentDirectory == rootDirectory) {
+        return "/";
+    }
+
+    std::error_code error;
+
+    const fs::path relativePath = fs::relative(
+        currentDirectory,
+        rootDirectory,
+        error
+    );
+
+    if (error) {
+        return "/";
+    }
+
+    return "/" + relativePath.generic_string();
+}
+bool PathManager::createDirectory(const std::string& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code error;
+    const fs::path target = resolvePath(path);
+
+    // Không cho tạo thư mục ngoài server_storage
+    if (!isInsideRoot(target)) {
+        return false;
+    }
+
+    // Không cho tạo nếu đã tồn tại
+    if (fs::exists(target, error) || error) {
+        return false;
+    }
+
+    return fs::create_directory(target, error) && !error;
+}
+bool PathManager::removeDirectory(const std::string& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code error;
+    const fs::path target = resolvePath(path);
+
+    // Không được truy cập ngoài server_storage
+    if (!isInsideRoot(target)) {
+        return false;
+    }
+
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (error || !isInsideRoot(canonicalTarget)) {
+        return false;
+    }
+
+    // Không được xóa thư mục gốc hoặc thư mục đang đứng
+    if (
+        canonicalTarget == rootDirectory ||
+        canonicalTarget == currentDirectory
+    ) {
+        return false;
+    }
+
+    if (
+        !fs::exists(canonicalTarget, error) ||
+        error ||
+        !fs::is_directory(canonicalTarget, error) ||
+        error
+    ) {
+        return false;
+    }
+
+    // fs::remove chỉ xóa được thư mục rỗng
+    return fs::remove(canonicalTarget, error) && !error;
+}
+std::optional<std::string> PathManager::listDirectory(
+    const std::string& path
+) const
+{
+    std::error_code error;
+
+    const fs::path target = path.empty()
+        ? currentDirectory
+        : resolvePath(path);
+
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error ||
+        !fs::is_directory(canonicalTarget, error) ||
+        error
+    ) {
+        return std::nullopt;
+    }
+
+    std::vector<fs::directory_entry> entries;
+
+    for (
+        fs::directory_iterator iterator(canonicalTarget, error);
+        !error && iterator != fs::directory_iterator();
+        iterator.increment(error)
+    ) {
+        entries.push_back(*iterator);
+    }
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    std::sort(
+        entries.begin(),
+        entries.end(),
+        [](const auto& left, const auto& right) {
+            return left.path().filename().string()
+                < right.path().filename().string();
+        }
+    );
+
+    if (entries.empty()) {
+        return std::string{"Directory is empty."};
+    }
+
+    std::ostringstream output;
+
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+
+        const bool isDirectory =
+            entry.is_directory(error);
+
+        if (error) {
+            return std::nullopt;
+        }
+
+        std::uintmax_t size = 0;
+
+        if (!isDirectory) {
+            size = entry.file_size(error);
+
+            if (error) {
+                return std::nullopt;
+            }
+        }
+
+        if (i > 0) {
+            output << " | ";
+        }
+
+        output
+            << "name=" << entry.path().filename().string()
+            << ", type=" << (isDirectory ? "directory" : "file")
+            << ", size=" << size
+            << ", permissions="
+            << (isDirectory ? "rwx" : "rw-");
+    }
+
+    return output.str();
+}
+std::optional<std::string> PathManager::listNames(
+    const std::string& path
+) const
+{
+    std::error_code error;
+
+    const fs::path target = path.empty()
+        ? currentDirectory
+        : resolvePath(path);
+
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error
+    ) {
+        return std::nullopt;
+    }
+
+    /*
+     * Nếu đường dẫn trỏ trực tiếp tới một file,
+     * NLST trả về tên file đó.
+     */
+    if (fs::is_regular_file(canonicalTarget, error)) {
+        if (error) {
+            return std::nullopt;
+        }
+
+        return canonicalTarget.filename().string();
+    }
+
+    if (
+        !fs::is_directory(canonicalTarget, error) ||
+        error
+    ) {
+        return std::nullopt;
+    }
+
+    std::vector<std::string> names;
+
+    for (
+        fs::directory_iterator iterator(canonicalTarget, error);
+        !error && iterator != fs::directory_iterator();
+        iterator.increment(error)
+    ) {
+        names.push_back(
+            iterator->path().filename().string()
+        );
+    }
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    std::sort(names.begin(), names.end());
+
+    if (names.empty()) {
+        return std::string{"Directory is empty."};
+    }
+
+    std::ostringstream output;
+
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i > 0) {
+            output << " | ";
+        }
+
+        output << names[i];
+    }
+
+    return output.str();
+}
+std::optional<std::string> PathManager::getStatus(
+    const std::string& path
+) const
+{
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    std::error_code error;
+
+    const fs::path target = resolvePath(path);
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error
+    ) {
+        return std::nullopt;
+    }
+
+    const bool isDirectory =
+        fs::is_directory(canonicalTarget, error);
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    const bool isFile =
+        fs::is_regular_file(canonicalTarget, error);
+
+    if (error || (!isDirectory && !isFile)) {
+        return std::nullopt;
+    }
+
+    std::uintmax_t size = 0;
+
+    if (isFile) {
+        size = fs::file_size(canonicalTarget, error);
+
+        if (error) {
+            return std::nullopt;
+        }
+    }
+
+    const fs::perms permissions =
+        fs::status(canonicalTarget, error).permissions();
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    auto hasPermission = [permissions](fs::perms permission) {
+        return (permissions & permission) != fs::perms::none;
+    };
+
+    std::string permissionText;
+
+    permissionText += hasPermission(fs::perms::owner_read)
+        ? 'r' : '-';
+
+    permissionText += hasPermission(fs::perms::owner_write)
+        ? 'w' : '-';
+
+    permissionText += hasPermission(fs::perms::owner_exec)
+        ? 'x' : '-';
+
+    std::ostringstream output;
+
+    output
+        << "name=" << canonicalTarget.filename().string()
+        << ", type=" << (isDirectory ? "directory" : "file")
+        << ", size=" << size
+        << ", permissions=" << permissionText;
+
+    return output.str();
+}
+std::optional<std::uintmax_t> PathManager::getFileSize(
+    const std::string& path
+) const
+{
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    std::error_code error;
+
+    const fs::path target = resolvePath(path);
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error ||
+        !fs::is_regular_file(canonicalTarget, error) ||
+        error
+    ) {
+        return std::nullopt;
+    }
+
+    const std::uintmax_t size =
+        fs::file_size(canonicalTarget, error);
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    return size;
+}
+std::optional<std::string> PathManager::getModificationTime(
+    const std::string& path
+) const
+{
+    if (path.empty()) {
+        return std::nullopt;
+    }
+
+    std::error_code error;
+
+    const fs::path target = resolvePath(path);
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error ||
+        !fs::is_regular_file(canonicalTarget, error) ||
+        error
+    ) {
+        return std::nullopt;
+    }
+
+    const fs::file_time_type fileTime =
+        fs::last_write_time(canonicalTarget, error);
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    /*
+     * Chuyển filesystem clock sang system clock.
+     */
+    const auto systemTime =
+        std::chrono::time_point_cast<
+            std::chrono::system_clock::duration
+        >(
+            fileTime -
+            fs::file_time_type::clock::now() +
+            std::chrono::system_clock::now()
+        );
+
+    const std::time_t rawTime =
+        std::chrono::system_clock::to_time_t(systemTime);
+
+    std::tm utcTime{};
+
+#ifdef _WIN32
+    gmtime_s(&utcTime, &rawTime);
+#else
+    gmtime_r(&rawTime, &utcTime);
+#endif
+
+    std::ostringstream output;
+
+    output << std::put_time(
+        &utcTime,
+        "%Y%m%d%H%M%S"
+    );
+
+    return output.str();
+}

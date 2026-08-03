@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-
+#include "../common/PathManager.h"
 struct ServerState;
 
 enum class LoginState {
@@ -13,6 +13,7 @@ enum class LoginState {
 struct SessionState {
     LoginState loginState = LoginState::NotLoggedIn;
     std::string username;
+    PathManager pathManager{"server_storage"};
 };
 
 struct SessionArgs {

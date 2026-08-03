@@ -23,6 +23,8 @@ add_executable(ftp_server
     src/server/main_server.cpp
     src/server/ServerManager.cpp
     src/server/Session.cpp
+    src/common/CommandParser.cpp
+    src/common/PathManager.cpp
 )
 target_link_libraries(ftp_server PRIVATE Threads::Threads HybridFTP_Core)
  

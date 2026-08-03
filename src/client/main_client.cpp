@@ -41,7 +41,26 @@ int connectToServer(const std::string& host, int port) {
 
     return sock;
 }
+bool sendAll(int sock, const std::string& data) {
+    std::size_t sentTotal = 0;
 
+    while (sentTotal < data.size()) {
+        const ssize_t sent = send(
+            sock,
+            data.data() + sentTotal,
+            data.size() - sentTotal,
+            0
+        );
+
+        if (sent <= 0) {
+            return false;
+        }
+
+        sentTotal += static_cast<std::size_t>(sent);
+    }
+
+    return true;
+}
 std::string recvLine(int sock) {
     std::string line;
     char c;
@@ -73,11 +92,15 @@ int main(int argc, char* argv[]) {
     // Server sends a 220 welcome banner as soon as we connect.
     std::cout << recvLine(sock) << "\n";
 
-    ClientCLI cli([sock](const std::string& commandLine) -> std::string {
-        std::string toSend = commandLine + "\r\n";
-        send(sock, toSend.data(), toSend.size(), 0);
-        return recvLine(sock);
-    });
+ClientCLI cli([sock](const std::string& commandLine) -> std::string {
+    const std::string request = commandLine + "\r\n";
+
+    if (!sendAll(sock, request)) {
+        return "Connection error: cannot send command.";
+    }
+
+    return recvLine(sock);
+});
 
     cli.run();
 

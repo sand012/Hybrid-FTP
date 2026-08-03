@@ -237,14 +237,233 @@ static bool handle_command(
     }
 
     /*
-     * Những lệnh chưa tích hợp sẽ được bổ sung sau:
-     *
-     * PWD, CWD, CDUP, MKD, RMD
-     * LIST, NLST, STAT, SIZE, MDTM
-     * TYPE, MODE, PORT, PASV
-     * RETR, STOR...
-     */
+    * PWD: hiển thị thư mục hiện tại của client.
+    */
+    if (command.name == "PWD") {
+        if (!command.argument.empty()) {
+            send_reply(
+                fd,
+                "501 PWD does not accept an argument.\r\n"
+            );
+            return false;
+        }
 
+        const std::string currentPath =
+            session.pathManager.getCurrentFTPPath();
+
+        send_reply(
+            fd,
+            "257 \"" + currentPath +
+            "\" is the current directory.\r\n"
+        );
+
+        return false;
+    }
+    if (command.name == "RMD") {
+    if (command.argument.empty()) {
+        send_reply(
+            fd,
+            "501 Missing directory name.\r\n"
+        );
+        return false;
+    }
+
+    if (!session.pathManager.removeDirectory(command.argument)) {
+        send_reply(
+            fd,
+            "550 Cannot remove directory.\r\n"
+        );
+        return false;
+    }
+
+    send_reply(
+        fd,
+        "250 Directory removed successfully.\r\n"
+    );
+    return false;
+}
+    /*
+ * CWD: thay đổi thư mục hiện tại.
+ */
+    if (command.name == "CWD") {
+        if (command.argument.empty()) {
+            send_reply(fd, "501 Missing directory path.\r\n");
+            return false;
+        }
+
+        if (!session.pathManager.changeDirectory(command.argument)) {
+            send_reply(
+                fd,
+                "550 Directory unavailable or access denied.\r\n"
+            );
+            return false;
+        }
+
+        send_reply(fd, "250 Directory changed successfully.\r\n");
+        return false;
+    }
+    // IMPLEMENT MORE
+        if (command.name == "CDUP") {
+        if (!command.argument.empty()) {
+            send_reply(
+                fd,
+                "501 CDUP does not accept an argument.\r\n"
+            );
+            return false;
+        }
+
+        if (!session.pathManager.changeToParentDirectory()) {
+            send_reply(fd, "550 Already at root directory.\r\n");
+            return false;
+        }
+
+        send_reply(
+            fd,
+            "250 Parent directory changed successfully.\r\n"
+        );
+        return false;
+    }
+        if (command.name == "MKD") {
+        if (command.argument.empty()) {
+            send_reply(
+                fd,
+                "501 Missing directory name.\r\n"
+            );
+            return false;
+        }
+
+        if (!session.pathManager.createDirectory(command.argument)) {
+            send_reply(
+                fd,
+                "550 Cannot create directory.\r\n"
+            );
+            return false;
+        }
+
+        send_reply(
+            fd,
+            "257 Directory created successfully.\r\n"
+        );
+        return false;
+    }
+    //IMPLEMENT HERE
+    if (command.name == "LIST") {
+    const auto listing =
+        session.pathManager.listDirectory(command.argument);
+
+    if (!listing.has_value()) {
+        send_reply(
+            fd,
+            "550 Directory unavailable or access denied.\r\n"
+        );
+        return false;
+    }
+
+    send_reply(
+        fd,
+        "212 " + listing.value() + "\r\n"
+    );
+
+    return false;
+}
+if (command.name == "NLST") {
+    const auto listing =
+        session.pathManager.listNames(command.argument);
+
+    if (!listing.has_value()) {
+        send_reply(
+            fd,
+            "550 Path unavailable or access denied.\r\n"
+        );
+        return false;
+    }
+
+    const std::string response =
+        "212 " + listing.value() + "\r\n";
+
+    send_reply(fd, response.c_str());
+    return false;
+}
+if (command.name == "STAT") {
+    if (command.argument.empty()) {
+        send_reply(
+            fd,
+            "211 Hybrid FTP server is running.\r\n"
+        );
+        return false;
+    }
+
+    const auto status =
+        session.pathManager.getStatus(command.argument);
+
+    if (!status.has_value()) {
+        send_reply(
+            fd,
+            "550 Path unavailable or access denied.\r\n"
+        );
+        return false;
+    }
+
+    const std::string response =
+        "213 " + status.value() + "\r\n";
+
+    send_reply(fd, response.c_str());
+    return false;
+}
+if (command.name == "SIZE") {
+    if (command.argument.empty()) {
+        send_reply(
+            fd,
+            "501 Missing filename.\r\n"
+        );
+        return false;
+    }
+
+    const auto size =
+        session.pathManager.getFileSize(command.argument);
+
+    if (!size.has_value()) {
+        send_reply(
+            fd,
+            "550 File unavailable or access denied.\r\n"
+        );
+        return false;
+    }
+
+    const std::string response =
+        "213 " + std::to_string(size.value()) + "\r\n";
+
+    send_reply(fd, response.c_str());
+    return false;
+}
+if (command.name == "MDTM") {
+    if (command.argument.empty()) {
+        send_reply(
+            fd,
+            "501 Missing filename.\r\n"
+        );
+        return false;
+    }
+
+    const auto modificationTime =
+        session.pathManager.getModificationTime(
+            command.argument
+        );
+
+    if (!modificationTime.has_value()) {
+        send_reply(
+            fd,
+            "550 File unavailable or access denied.\r\n"
+        );
+        return false;
+    }
+
+    const std::string response =
+        "213 " + modificationTime.value() + "\r\n";
+
+    send_reply(fd, response.c_str());
+    return false;
+}
     send_reply(
         fd,
         "502 Command not implemented.\r\n"
@@ -326,6 +545,7 @@ void* handle_client_thread(void* argPtr)
     /*
      * Dọn dẹp tài nguyên của client.
      */
+    
     shutdown(fd, SHUT_RDWR);
     close(fd);
 
