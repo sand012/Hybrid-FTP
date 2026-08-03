@@ -1,6 +1,19 @@
 #pragma once
- 
+
+#include <string>
+
 struct ServerState;
+
+enum class LoginState {
+    NotLoggedIn,
+    UsernameAccepted,
+    LoggedIn
+};
+
+struct SessionState {
+    LoginState loginState = LoginState::NotLoggedIn;
+    std::string username;
+};
 
 struct SessionArgs {
     ServerState* state;
@@ -8,7 +21,5 @@ struct SessionArgs {
     char ip[46];
     int port;
 };
- 
 
 void* handle_client_thread(void* argPtr);
- 
