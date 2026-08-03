@@ -1,2 +1,0 @@
-/usr/bin/ar qc libHybridFTP_Core.a CMakeFiles/HybridFTP_Core.dir/src/rdt/UDPSocket.cpp.o CMakeFiles/HybridFTP_Core.dir/src/rdt/CustomHeader.cpp.o CMakeFiles/HybridFTP_Core.dir/src/rdt/ReliableTransfer.cpp.o CMakeFiles/HybridFTP_Core.dir/src/common/CommandParser.cpp.o CMakeFiles/HybridFTP_Core.dir/src/common/CryptoHash.cpp.o CMakeFiles/HybridFTP_Core.dir/src/common/FileHandler.cpp.o CMakeFiles/HybridFTP_Core.dir/src/common/TCPControl.cpp.o
-/usr/bin/ranlib libHybridFTP_Core.a

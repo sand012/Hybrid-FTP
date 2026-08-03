@@ -1,5 +1,0 @@
-/workspaces/Hybrid-FTP/build/CMakeFiles/HybridFTP_Core.dir
-/workspaces/Hybrid-FTP/build/CMakeFiles/ftp_server.dir
-/workspaces/Hybrid-FTP/build/CMakeFiles/ftp_client.dir
-/workspaces/Hybrid-FTP/build/CMakeFiles/edit_cache.dir
-/workspaces/Hybrid-FTP/build/CMakeFiles/rebuild_cache.dir

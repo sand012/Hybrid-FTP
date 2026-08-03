@@ -1,0 +1,15 @@
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+compile_commands.json
+install_manifest.txt
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
