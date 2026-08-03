@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/ftp_server.dir/src/server/main_server.cpp.o CMakeFiles/ftp_server.dir/src/server/ServerManager.cpp.o CMakeFiles/ftp_server.dir/src/server/Session.cpp.o -o ftp_server  libHybridFTP_Core.a 

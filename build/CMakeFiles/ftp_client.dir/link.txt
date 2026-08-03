@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/ftp_client.dir/src/client/main_client.cpp.o CMakeFiles/ftp_client.dir/src/client/ClientCLI.cpp.o -o ftp_client  libHybridFTP_Core.a 
