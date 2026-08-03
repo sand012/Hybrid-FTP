@@ -1,6 +1,6 @@
 #include "Session.h"
 #include "ServerManager.h"
-
+#include "../common/CommandParser.h"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -64,37 +64,48 @@ static bool parse_port_command(const char* args, std::string& outIp, int& outPor
 
 static void handle_command(int fd, const char* line) {
     printf("[Session] -> %s\n", line);
+ParsedCommand command = CommandParser::parse(line);
 
-    char command[16];
-    first_word_upper(line, command, sizeof(command));
+if (!command.valid) {
+    send_reply(fd, "500 Invalid command.\r\n");
+    return;
+}
+
+printf(
+    "[Session] Command: %s, Argument: %s\n",
+    command.name.c_str(),
+    command.argument.c_str()
+);
 
     // Tách phần tham số phía sau lệnh (nếu có)
     const char* args = line;
     while (*args != '\0' && !isspace((unsigned char)*args)) args++;
     while (*args != '\0' && isspace((unsigned char)*args)) args++;
-
-    if (strcmp(command, "QUIT") == 0) {
-        send_reply(fd, "221 Goodbye.\r\n");
-    } else if (strcmp(command, "NOOP") == 0) {
-        send_reply(fd, "200 NOOP OK.\r\n");
-    } else if (strcmp(command, "USER") == 0) {
-        send_reply(fd, "331 Username OK, need password.\r\n");
-    } else if (strcmp(command, "PASS") == 0) {
-        send_reply(fd, "230 Login successful.\r\n");
-    } else if (strcmp(command, "PORT") == 0) {
-        if (parse_port_command(args, dataState.remoteIp, dataState.remotePort)) {
-            dataState.isPassive = false;
-            send_reply(fd, "200 PORT command successful.\r\n");
-        } else {
-            send_reply(fd, "501 Syntax error in parameters or arguments.\r\n");
-        }
-    } else if (strcmp(command, "PASV") == 0) {
-        dataState.isPassive = true;
-        // Phản hồi mẫu Passive Mode chuyển đổi IP và Port cho client kết nối dữ liệu
-        send_reply(fd, "227 Entering Passive Mode (127,0,0,1,19,136).\r\n");
-    } else {
-        send_reply(fd, "502 Command not implemented (Day 4-5 work).\r\n");
+if (command.name == "QUIT") {
+    send_reply(fd, "221 Goodbye.\r\n");
+}
+else if (command.name == "NOOP") {
+    send_reply(fd, "200 NOOP OK.\r\n");
+}
+else if (command.name == "USER") {
+    if (command.argument.empty()) {
+        send_reply(fd, "501 Missing username.\r\n");
     }
+    else {
+        send_reply(fd, "331 Username OK, need password.\r\n");
+    }
+}
+else if (command.name == "PASS") {
+    if (command.argument.empty()) {
+        send_reply(fd, "501 Missing password.\r\n");
+    }
+    else {
+        send_reply(fd, "230 Login successful.\r\n");
+    }
+}
+else {
+    send_reply(fd, "502 Command not implemented.\r\n");
+}
 }
 
 void* handle_client_thread(void* argPtr) {
