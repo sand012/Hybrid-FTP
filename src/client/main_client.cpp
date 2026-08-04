@@ -75,7 +75,55 @@ std::string recvLine(int sock) {
     }
     return line;
 }
+std::string recvReply(int sock)
+{
+    const std::string firstLine = recvLine(sock);
 
+    if (firstLine.empty()) {
+        return "";
+    }
+
+    std::string reply = firstLine;
+
+    /*
+     * Reply một dòng có dạng: 230 Login successful.
+     * Reply nhiều dòng bắt đầu bằng: 214-...
+     */
+    if (
+        firstLine.size() < 4 ||
+        firstLine[3] != '-'
+    ) {
+        return reply;
+    }
+
+    const std::string replyCode =
+        firstLine.substr(0, 3);
+
+    /*
+     * Đọc đến dòng kết thúc có cùng mã và dấu cách:
+     * 214 End of HELP.
+     */
+    while (true) {
+        const std::string nextLine = recvLine(sock);
+
+        if (nextLine.empty()) {
+            break;
+        }
+
+        reply += "\n" + nextLine;
+
+        if (
+            nextLine.rfind(
+                replyCode + " ",
+                0
+            ) == 0
+        ) {
+            break;
+        }
+    }
+
+    return reply;
+}
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -90,17 +138,22 @@ int main(int argc, char* argv[]) {
     }
 
     // Server sends a 220 welcome banner as soon as we connect.
-    std::cout << recvLine(sock) << "\n";
+    std::cout << recvReply(sock) << "\n";
+    
 
-ClientCLI cli([sock](const std::string& commandLine) -> std::string {
-    const std::string request = commandLine + "\r\n";
+ClientCLI cli(
+    [sock](const std::string& commandLine) -> std::string {
+        const std::string toSend = commandLine + "\r\n";
 
-    if (!sendAll(sock, request)) {
-        return "Connection error: cannot send command.";
+        if (send(sock, toSend.data(), toSend.size(), 0) < 0) {
+            return "Error: Cannot send command.";
+        }
+
+        return recvReply(sock);
     }
+);
 
-    return recvLine(sock);
-});
+cli.run();
 
     cli.run();
 

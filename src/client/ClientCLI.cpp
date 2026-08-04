@@ -6,7 +6,7 @@
 ClientCLI::ClientCLI(CommandSender sender) : m_sendCommand(std::move(sender)) {}
 
 void ClientCLI::run() {
-    printBanner();
+    
 
     std::string line;
     while (true) {
@@ -29,11 +29,7 @@ void ClientCLI::run() {
     }
 }
 
-void ClientCLI::printBanner() const {
-    std::cout << "Hybrid FTP Client - Day 1-3 skeleton\n";
-    std::cout << "Type an FTP command (e.g. USER alice, PASS secret, QUIT).\n";
-    std::cout << "Command parsing/validation arrives with Dev 1's Day 4-5 work.\n\n";
-}
+
 
 void ClientCLI::printPrompt() const {
     std::cout << "ftp> " << std::flush;
@@ -52,3 +48,4 @@ std::string ClientCLI::toUpperFirstWord(const std::string& s) {
     for (char& c : word) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     return word;
 }
+

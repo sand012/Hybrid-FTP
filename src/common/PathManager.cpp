@@ -529,3 +529,185 @@ std::optional<std::string> PathManager::getModificationTime(
 
     return output.str();
 }
+bool PathManager::deleteFile(const std::string& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code error;
+
+    const fs::path target = resolvePath(path);
+
+    if (!isInsideRoot(target)) {
+        return false;
+    }
+
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error
+    ) {
+        return false;
+    }
+
+    /*
+     * DELE chỉ được xóa file thường.
+     * Thư mục phải dùng RMD.
+     */
+    if (
+        !fs::is_regular_file(canonicalTarget, error) ||
+        error
+    ) {
+        return false;
+    }
+
+    return fs::remove(canonicalTarget, error) && !error;
+}
+bool PathManager::canRename(
+    const std::string& path
+) const
+{
+    if (path.empty()) {
+        return false;
+    }
+
+    std::error_code error;
+
+    const fs::path target = resolvePath(path);
+    const fs::path canonicalTarget =
+        fs::weakly_canonical(target, error);
+
+    if (
+        error ||
+        !isInsideRoot(canonicalTarget) ||
+        !fs::exists(canonicalTarget, error) ||
+        error
+    ) {
+        return false;
+    }
+
+    const bool isFile =
+        fs::is_regular_file(canonicalTarget, error);
+
+    if (error) {
+        return false;
+    }
+
+    const bool isDirectory =
+        fs::is_directory(canonicalTarget, error);
+
+    if (error || (!isFile && !isDirectory)) {
+        return false;
+    }
+
+    // Không cho đổi tên thư mục gốc.
+    if (canonicalTarget == rootDirectory) {
+        return false;
+    }
+
+    /*
+     * Không đổi tên thư mục hiện tại hoặc thư mục cha
+     * của thư mục hiện tại vì sẽ làm currentDirectory
+     * mất hiệu lực.
+     */
+    if (isDirectory) {
+        const fs::path relativeCurrent =
+            fs::relative(
+                currentDirectory,
+                canonicalTarget,
+                error
+            );
+
+        if (error) {
+            return false;
+        }
+
+        const auto firstPart = relativeCurrent.begin();
+
+        if (
+            firstPart == relativeCurrent.end() ||
+            *firstPart != ".."
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+bool PathManager::renamePath(
+    const std::string& oldPath,
+    const std::string& newPath
+) {
+    if (
+        oldPath.empty() ||
+        newPath.empty() ||
+        !canRename(oldPath)
+    ) {
+        return false;
+    }
+
+    std::error_code error;
+
+    const fs::path source =
+        fs::weakly_canonical(
+            resolvePath(oldPath),
+            error
+        );
+
+    if (
+        error ||
+        !isInsideRoot(source)
+    ) {
+        return false;
+    }
+
+    const fs::path destination =
+        resolvePath(newPath);
+
+    if (
+        destination.filename().empty() ||
+        !isInsideRoot(destination)
+    ) {
+        return false;
+    }
+
+    /*
+     * Không ghi đè file/thư mục đã tồn tại.
+     */
+    if (
+        fs::exists(destination, error) ||
+        error
+    ) {
+        return false;
+    }
+
+    /*
+     * Thư mục cha của đích phải tồn tại
+     * và phải nằm trong server_storage.
+     */
+    const fs::path destinationParent =
+        fs::weakly_canonical(
+            destination.parent_path(),
+            error
+        );
+
+    if (
+        error ||
+        !isInsideRoot(destinationParent) ||
+        !fs::exists(destinationParent, error) ||
+        error ||
+        !fs::is_directory(destinationParent, error) ||
+        error
+    ) {
+        return false;
+    }
+
+    fs::rename(source, destination, error);
+
+    return !error;
+}
