@@ -43,6 +43,7 @@ add_executable(ftp_client
 )
 target_link_libraries(ftp_client PRIVATE Threads::Threads HybridFTP_Core)
 
+HEAD
 # ============================================================
 #  RDT File Transfer — nghiệm thu Sliding Window (Go-Back-N)
 # ============================================================
@@ -72,3 +73,16 @@ add_executable(rdt_saw_client
 )
 target_include_directories(rdt_saw_client PRIVATE src/rdt)
 target_link_libraries(rdt_saw_client PRIVATE HybridFTP_Core)
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(path_manager_listing_test
+        tests/PathManagerListingTest.cpp
+        src/common/PathManager.cpp
+    )
+    target_include_directories(path_manager_listing_test PRIVATE src/common)
+    add_test(NAME path_manager_listing_test COMMAND path_manager_listing_test)
+endif()
+
+

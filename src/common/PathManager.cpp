@@ -8,6 +8,74 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+
+std::string sanitizeListingName(std::string name)
+{
+    // LIST/STAT records and NLST names are separated by CRLF.  Do not let a
+    // filename inject an extra FTP reply line on the control connection.
+    std::replace(name.begin(), name.end(), '\r', '?');
+    std::replace(name.begin(), name.end(), '\n', '?');
+    return name;
+}
+
+std::optional<std::string> formatListEntry(
+    const fs::directory_entry& entry
+)
+{
+    std::error_code error;
+    const fs::file_status status = entry.status(error);
+
+    if (error) {
+        return std::nullopt;
+    }
+
+    const bool isDirectory = fs::is_directory(status);
+    const bool isFile = fs::is_regular_file(status);
+
+    if (!isDirectory && !isFile) {
+        return std::nullopt;
+    }
+
+    std::uintmax_t size = 0;
+
+    if (isFile) {
+        size = entry.file_size(error);
+
+        if (error) {
+            return std::nullopt;
+        }
+    }
+
+    const fs::perms permissions = status.permissions();
+    const fs::perms permissionBits[] = {
+        fs::perms::owner_read, fs::perms::owner_write,
+        fs::perms::owner_exec, fs::perms::group_read,
+        fs::perms::group_write, fs::perms::group_exec,
+        fs::perms::others_read, fs::perms::others_write,
+        fs::perms::others_exec
+    };
+    constexpr char permissionChars[] = "rwxrwxrwx";
+
+    std::string permissionText;
+    permissionText.reserve(9);
+
+    for (std::size_t index = 0; index < 9; ++index) {
+        permissionText += (permissions & permissionBits[index])
+            != fs::perms::none ? permissionChars[index] : '-';
+    }
+
+    std::ostringstream output;
+    output
+        << "name=" << sanitizeListingName(entry.path().filename().string())
+        << ", type=" << (isDirectory ? "directory" : "file")
+        << ", size=" << size
+        << ", permissions=" << permissionText;
+    return output.str();
+}
+
+} // namespace
+
 PathManager::PathManager(const std::string& root)
 {
     std::error_code error;
@@ -207,10 +275,23 @@ std::optional<std::string> PathManager::listDirectory(
         error ||
         !isInsideRoot(canonicalTarget) ||
         !fs::exists(canonicalTarget, error) ||
-        error ||
-        !fs::is_directory(canonicalTarget, error) ||
         error
     ) {
+        return std::nullopt;
+    }
+
+    if (fs::is_regular_file(canonicalTarget, error)) {
+        if (error) {
+            return std::nullopt;
+        }
+
+        const auto line = formatListEntry(fs::directory_entry(canonicalTarget));
+        return line.has_value()
+            ? std::optional<std::string>{line.value() + "\r\n"}
+            : std::nullopt;
+    }
+
+    if (error || !fs::is_directory(canonicalTarget, error) || error) {
         return std::nullopt;
     }
 
@@ -237,42 +318,16 @@ std::optional<std::string> PathManager::listDirectory(
         }
     );
 
-    if (entries.empty()) {
-        return std::string{"Directory is empty."};
-    }
-
     std::ostringstream output;
 
-    for (std::size_t i = 0; i < entries.size(); ++i) {
-        const auto& entry = entries[i];
+    for (const auto& entry : entries) {
+        const auto line = formatListEntry(entry);
 
-        const bool isDirectory =
-            entry.is_directory(error);
-
-        if (error) {
+        if (!line.has_value()) {
             return std::nullopt;
         }
 
-        std::uintmax_t size = 0;
-
-        if (!isDirectory) {
-            size = entry.file_size(error);
-
-            if (error) {
-                return std::nullopt;
-            }
-        }
-
-        if (i > 0) {
-            output << " | ";
-        }
-
-        output
-            << "name=" << entry.path().filename().string()
-            << ", type=" << (isDirectory ? "directory" : "file")
-            << ", size=" << size
-            << ", permissions="
-            << (isDirectory ? "rwx" : "rw-");
+        output << line.value() << "\r\n";
     }
 
     return output.str();
@@ -308,7 +363,8 @@ std::optional<std::string> PathManager::listNames(
             return std::nullopt;
         }
 
-        return canonicalTarget.filename().string();
+        return sanitizeListingName(canonicalTarget.filename().string())
+            + "\r\n";
     }
 
     if (
@@ -336,23 +392,15 @@ std::optional<std::string> PathManager::listNames(
 
     std::sort(names.begin(), names.end());
 
-    if (names.empty()) {
-        return std::string{"Directory is empty."};
-    }
-
     std::ostringstream output;
 
-    for (std::size_t i = 0; i < names.size(); ++i) {
-        if (i > 0) {
-            output << " | ";
-        }
-
-        output << names[i];
+    for (const auto& name : names) {
+        output << sanitizeListingName(name) << "\r\n";
     }
 
     return output.str();
 }
-std::optional<std::string> PathManager::getStatus(
+std::optional<PathStatus> PathManager::getStatus(
     const std::string& path
 ) const
 {
@@ -389,47 +437,13 @@ std::optional<std::string> PathManager::getStatus(
         return std::nullopt;
     }
 
-    std::uintmax_t size = 0;
+    const auto listing = listDirectory(path);
 
-    if (isFile) {
-        size = fs::file_size(canonicalTarget, error);
-
-        if (error) {
-            return std::nullopt;
-        }
-    }
-
-    const fs::perms permissions =
-        fs::status(canonicalTarget, error).permissions();
-
-    if (error) {
+    if (!listing.has_value()) {
         return std::nullopt;
     }
 
-    auto hasPermission = [permissions](fs::perms permission) {
-        return (permissions & permission) != fs::perms::none;
-    };
-
-    std::string permissionText;
-
-    permissionText += hasPermission(fs::perms::owner_read)
-        ? 'r' : '-';
-
-    permissionText += hasPermission(fs::perms::owner_write)
-        ? 'w' : '-';
-
-    permissionText += hasPermission(fs::perms::owner_exec)
-        ? 'x' : '-';
-
-    std::ostringstream output;
-
-    output
-        << "name=" << canonicalTarget.filename().string()
-        << ", type=" << (isDirectory ? "directory" : "file")
-        << ", size=" << size
-        << ", permissions=" << permissionText;
-
-    return output.str();
+    return PathStatus{isDirectory, listing.value()};
 }
 std::optional<std::uintmax_t> PathManager::getFileSize(
     const std::string& path

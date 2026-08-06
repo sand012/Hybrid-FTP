@@ -3,9 +3,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <optional>
 #include <string>
-#include <unordered_map>
+
+struct PathStatus {
+  bool isDirectory;
+  std::string listing;
+};
+
 class PathManager {
 private:
   std::filesystem::path rootDirectory;
@@ -22,7 +26,7 @@ public:
 
   std::optional<std::string> listNames(const std::string &path = "") const;
 
-  std::optional<std::string> getStatus(const std::string &path) const;
+  std::optional<PathStatus> getStatus(const std::string &path) const;
 
   std::optional<std::uintmax_t> getFileSize(const std::string &path) const;
 

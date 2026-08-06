@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 
 #include <sys/socket.h>
 #include <unistd.h>
@@ -261,7 +262,40 @@ static bool handle_command(int fd, const std::string &line,
     send_reply(fd, "530 Not logged in.\r\n");
     return false;
   }
+  // Check Type
+  if (command.name == "TYPE") {
+    if (command.argument == "A" || command.argument == "a") {
 
+      session.transferType = TransferType::ASCII;
+
+      send_reply(fd, "200 Type set to A (ASCII).\r\n");
+      return false;
+    }
+
+    if (command.argument == "I" || command.argument == "i") {
+
+      session.transferType = TransferType::Binary;
+
+      send_reply(fd, "200 Type set to I (Binary).\r\n");
+      return false;
+    }
+
+    send_reply(fd, "501 TYPE requires A or I.\r\n");
+    return false;
+  }
+  // Check Mode Stream
+  if (command.name == "MODE") {
+    if (command.argument == "S" || command.argument == "s") {
+
+      session.transferMode = TransferMode::Stream;
+
+      send_reply(fd, "200 Mode set to S (Stream).\r\n");
+      return false;
+    }
+
+    send_reply(fd, "501 MODE only supports stream mode\r\n");
+    return false;
+  }
   /*
    * PWD: hiển thị thư mục hiện tại của client.
    */
@@ -346,7 +380,12 @@ static bool handle_command(int fd, const std::string &line,
       return false;
     }
 
-    send_reply(fd, "212 " + listing.value() + "\r\n");
+    send_reply(fd, "150 Opening data connection for directory list.\r\n");
+
+    // TODO Ngày 8:
+    // gửi listing.value() qua UDP/RDT data channel
+
+    send_reply(fd, "226 Directory transfer complete.\r\n");
 
     return false;
   }
@@ -358,14 +397,25 @@ static bool handle_command(int fd, const std::string &line,
       return false;
     }
 
-    const std::string response = "212 " + listing.value() + "\r\n";
+    send_reply(fd, "150 Opening data connection for name list.\r\n");
 
-    send_reply(fd, response);
+    // TODO Ngày 8:
+    // gửi listing.value() qua UDP/RDT data channel
+
+    send_reply(fd, "226 Directory transfer complete.\r\n");
+
     return false;
   }
   if (command.name == "STAT") {
     if (command.argument.empty()) {
-      send_reply(fd, "211 Hybrid FTP server is running.\r\n");
+      send_reply(fd, "211-Hybrid FTP server status:\r\n"
+                     " Server is running\r\n"
+                     " TYPE: " +
+                         std::string(session.transferType == TransferType::ASCII
+                                         ? "ASCII"
+                                         : "Binary") +
+                     "\r\n MODE: Stream\r\n"
+                     "211 End of status.\r\n");
       return false;
     }
 
@@ -376,9 +426,14 @@ static bool handle_command(int fd, const std::string &line,
       return false;
     }
 
-    const std::string response = "213 " + status.value() + "\r\n";
+    const std::string code = status->isDirectory ? "212" : "213";
+    const std::string subject = status->isDirectory
+                                    ? "Directory status follows"
+                                    : "File status follows";
 
-    send_reply(fd, response);
+    send_reply(fd, code + "-" + subject + ".\r\n" + status->listing +
+                       code + " End of status.\r\n");
+
     return false;
   }
   if (command.name == "SIZE") {
