@@ -3,17 +3,20 @@
 #include <optional>
 #include <string>
 struct ServerState;
+enum class TransferType { ASCII, Binary };
 
+enum class TransferMode { Stream };
 enum class LoginState { NotLoggedIn, UsernameAccepted, LoggedIn };
 
 struct SessionState {
-    LoginState loginState = LoginState::NotLoggedIn;
-    std::string username;
+  LoginState loginState = LoginState::NotLoggedIn;
+  std::string username;
+  TransferType transferType = TransferType::ASCII;
+  TransferMode transferMode = TransferMode::Stream;
+  PathManager pathManager{"server_storage"};
 
-    PathManager pathManager{"server_storage"};
-
-    // Lưu đường dẫn từ lệnh RNFR cho riêng từng client.
-    std::optional<std::string> renameFrom;
+  // Lưu đường dẫn từ lệnh RNFR cho riêng từng client.
+  std::optional<std::string> renameFrom;
 };
 struct SessionArgs {
   ServerState *state;

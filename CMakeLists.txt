@@ -33,3 +33,14 @@ add_executable(ftp_client
     src/client/ClientCLI.cpp
 )
 target_link_libraries(ftp_client PRIVATE Threads::Threads HybridFTP_Core)
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(path_manager_listing_test
+        tests/PathManagerListingTest.cpp
+        src/common/PathManager.cpp
+    )
+    target_include_directories(path_manager_listing_test PRIVATE src/common)
+    add_test(NAME path_manager_listing_test COMMAND path_manager_listing_test)
+endif()
