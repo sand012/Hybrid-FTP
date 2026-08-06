@@ -7,13 +7,15 @@
 //  se co 1 luot la goi TRUNG (client co tinh gui lai) de chung
 //  minh receiver loai bo dung, khong giao du lieu 2 lan.
 // ============================================================
-int main()
+#include <cstdlib>
+int main(int argc, char* argv[])
 {
-    const uint16_t SERVER_PORT = 9000;
+    const uint16_t SERVER_PORT = (argc >= 2) ? static_cast<uint16_t>(std::atoi(argv[1])) : 9299;
 
     UDPSocket socket;
     socket.open();
     socket.bind(SERVER_PORT);
+    socket.setRecvTimeout(5000);
     printf("[SERVER] RDT lang nghe tren port %u...\n\n", SERVER_PORT);
 
     RDTReceiver receiver(socket);
