@@ -31,6 +31,8 @@ public:
   std::optional<std::uintmax_t> getFileSize(const std::string &path) const;
 
   std::optional<std::string> getModificationTime(const std::string &path) const;
+  bool isPathInsideRoot(const std::string &path) const;
+  std::string generateUniqueFilename(const std::string &baseName) const;
   std::filesystem::path resolvePath(const std::string &input) const;
   bool deleteFile(const std::string &path);
 
@@ -40,3 +42,4 @@ public:
   bool changeDirectory(const std::string &path);
   bool changeToParentDirectory();
 };
+

@@ -7,11 +7,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-// NOTE: This is a minimal, temporary TCP connection just so Dev 3 has an
-// end-to-end demo (CLI <-> Session) for the Day 1-3 milestone. Dev 1's
-// TCPControl module (Day 4-5) is meant to replace connectToServer()/
-// sendAndReceive() below with the real control-channel implementation
-// (framing, reply-code parsing, etc).
+// TCP control channel helpers
 
 namespace {
 
@@ -41,26 +37,18 @@ int connectToServer(const std::string& host, int port) {
 
     return sock;
 }
+
 bool sendAll(int sock, const std::string& data) {
     std::size_t sentTotal = 0;
-
     while (sentTotal < data.size()) {
-        const ssize_t sent = send(
-            sock,
-            data.data() + sentTotal,
-            data.size() - sentTotal,
-            0
-        );
-
-        if (sent <= 0) {
-            return false;
-        }
-
+        const ssize_t sent = send(sock, data.data() + sentTotal,
+                                  data.size() - sentTotal, 0);
+        if (sent <= 0) return false;
         sentTotal += static_cast<std::size_t>(sent);
     }
-
     return true;
 }
+
 std::string recvLine(int sock) {
     std::string line;
     char c;
@@ -75,55 +63,28 @@ std::string recvLine(int sock) {
     }
     return line;
 }
-std::string recvReply(int sock)
-{
-    const std::string firstLine = recvLine(sock);
 
-    if (firstLine.empty()) {
-        return "";
-    }
+std::string recvReply(int sock) {
+    const std::string firstLine = recvLine(sock);
+    if (firstLine.empty()) return "";
 
     std::string reply = firstLine;
 
-    /*
-     * Reply một dòng có dạng: 230 Login successful.
-     * Reply nhiều dòng bắt đầu bằng: 214-...
-     */
-    if (
-        firstLine.size() < 4 ||
-        firstLine[3] != '-'
-    ) {
+    // Multi-line reply starts with "XYZ-"
+    if (firstLine.size() < 4 || firstLine[3] != '-') {
         return reply;
     }
 
-    const std::string replyCode =
-        firstLine.substr(0, 3);
-
-    /*
-     * Đọc đến dòng kết thúc có cùng mã và dấu cách:
-     * 214 End of HELP.
-     */
+    const std::string replyCode = firstLine.substr(0, 3);
     while (true) {
         const std::string nextLine = recvLine(sock);
-
-        if (nextLine.empty()) {
-            break;
-        }
-
+        if (nextLine.empty()) break;
         reply += "\n" + nextLine;
-
-        if (
-            nextLine.rfind(
-                replyCode + " ",
-                0
-            ) == 0
-        ) {
-            break;
-        }
+        if (nextLine.rfind(replyCode + " ", 0) == 0) break;
     }
-
     return reply;
 }
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -133,27 +94,19 @@ int main(int argc, char* argv[]) {
     if (argc >= 3) port = std::atoi(argv[2]);
 
     int sock = connectToServer(host, port);
-    if (sock < 0) {
-        return 1;
-    }
+    if (sock < 0) return 1;
 
-    // Server sends a 220 welcome banner as soon as we connect.
+    // Server sends 220 welcome banner immediately on connect.
     std::cout << recvReply(sock) << "\n";
-    
 
-ClientCLI cli(
-    [sock](const std::string& commandLine) -> std::string {
-        const std::string toSend = commandLine + "\r\n";
-
-        if (send(sock, toSend.data(), toSend.size(), 0) < 0) {
-            return "Error: Cannot send command.";
-        }
-
-        return recvReply(sock);
-    }
-);
-
-cli.run();
+    ClientCLI cli(
+        [sock](const std::string& commandLine) -> std::string {
+            const std::string toSend = commandLine + "\r\n";
+            if (!sendAll(sock, toSend)) return "Error: Cannot send command.";
+            return recvReply(sock);
+        },
+        sock
+    );
 
     cli.run();
 

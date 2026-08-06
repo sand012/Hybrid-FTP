@@ -1,5 +1,4 @@
 #ifndef CRYPTO_HASH_H
-#ifndef CRYPTO_HASH_H
 #define CRYPTO_HASH_H
 
 #include <string>
@@ -12,5 +11,4 @@ public:
     static std::string computeSHA256FromFile(const std::string& filepath);
 };
 
-#endif 
-#endif
+#endif // CRYPTO_HASH_H
