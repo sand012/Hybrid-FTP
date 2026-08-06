@@ -1,149 +1,195 @@
+// ============================================================
+//  ReliableTransfer.cpp
+//  Lớp bọc mỏng: RDTSender / RDTReceiver delegate hoàn toàn sang
+//  RDTWindowSender / RDTWindowReceiver (SlidingWindow.h/cpp).
+//
+//  sendPacket() / receivePacket() giữ lại Stop-and-Wait để tương
+//  thích ngược với RdtClientTest / RdtSeverTest (demo giai đoạn 2).
+// ============================================================
 #include "ReliableTransfer.h"
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <vector>
 
-RDTSender::RDTSender(UDPSocket& socket, const std::string& destIP, uint16_t destPort)
-    : socket_(socket), destIP_(destIP), destPort_(destPort),
-      currentSeq_(0), state_(SenderState::WAIT_CALL_0)
+// ============================================================
+//  RDTSender
+// ============================================================
+
+RDTSender::RDTSender(UDPSocket& socket,
+                     const std::string& destIP,
+                     uint16_t destPort)
+    : socket_(socket), destIP_(destIP), destPort_(destPort)
 {
 }
 
+bool RDTSender::runWindowSender(const uint8_t* data, size_t len)
+{
+    RDTWindowSender ws(socket_, destIP_, destPort_);
+    ws.setMSS(mss_);
+    ws.setTimeoutMs(timeoutMs_);
+    ws.setMaxRetransmitRounds(maxRetries_);
+    ws.setInitialCwnd(initCwnd_);
+    ws.setInitialSsthresh(initSsthresh_);
+    ws.setMaxWindowSegments(maxWinSegs_);
+
+    bool ok = ws.sendData(data, len);
+
+    // Lưu thống kê
+    lastCwnd_     = ws.getFinalCwnd();
+    lastTimeouts_ = ws.getTotalTimeouts();
+    lastSegsSent_ = ws.getTotalPacketsSent();
+
+    return ok;
+}
+
+bool RDTSender::sendBuffer(const uint8_t* data, size_t totalLen)
+{
+    printf("[RDT-SENDER] sendBuffer: %zu bytes\n", totalLen);
+    return runWindowSender(data, totalLen);
+}
+
+bool RDTSender::sendFile(const std::string& filePath)
+{
+    std::ifstream ifs(filePath, std::ios::binary | std::ios::ate);
+    if (!ifs.is_open())
+    {
+        fprintf(stderr, "[RDT-SENDER] Khong the mo file: %s\n", filePath.c_str());
+        return false;
+    }
+
+    std::streamsize fileSize = ifs.tellg();
+    ifs.seekg(0, std::ios::beg);
+
+    std::vector<uint8_t> buf(static_cast<size_t>(fileSize));
+    if (fileSize > 0 && !ifs.read(reinterpret_cast<char*>(buf.data()), fileSize))
+    {
+        fprintf(stderr, "[RDT-SENDER] Loi doc file: %s\n", filePath.c_str());
+        return false;
+    }
+    ifs.close();
+
+    printf("[RDT-SENDER] sendFile: '%s' (%lld bytes)\n",
+           filePath.c_str(), static_cast<long long>(fileSize));
+    return runWindowSender(buf.data(), buf.size());
+}
+
+// ---- Stop-and-Wait backward-compat ----
+// Gửi đúng 1 gói với window=1 và không congestion control phức tạp.
 bool RDTSender::sendPacket(const uint8_t* data, size_t len)
 {
-   
-    CustomUDPHeader hdr{};
-    hdr.seqNum = currentSeq_;
-    hdr.ackNum = 0;
-    hdr.payloadLen = static_cast<uint16_t>(len);
-    hdr.windowSize = 1; 
-    setFlag(hdr, FLAG_DATA);
-    hdr.checksum = calculateChecksum(hdr, data, len);
+    // Tạo sender với window=1, ssthresh=64 (thực tế không reach được)
+    RDTWindowSender ws(socket_, destIP_, destPort_);
+    ws.setMSS(len > 0 ? len : 1);         // 1 segment = toàn bộ payload
+    ws.setTimeoutMs(timeoutMs_);
+    ws.setMaxRetransmitRounds(maxRetries_);
+    ws.setInitialCwnd(1.0);
+    ws.setInitialSsthresh(64.0);
+    ws.setMaxWindowSegments(1);            // Stop-and-Wait: window = 1
 
-    std::vector<uint8_t> buffer(CUSTOM_UDP_HEADER_SIZE + len);
-    serializeHeader(hdr, buffer.data());
-    if (len > 0)
-    {
-        std::memcpy(buffer.data() + CUSTOM_UDP_HEADER_SIZE, data, len);
-    }
+    bool ok = ws.sendData(data, len);
 
-    // Chuyển state: đã gửi, giờ đang chờ ACK tương ứng
-    state_ = (currentSeq_ == 0) ? SenderState::WAIT_ACK_0 : SenderState::WAIT_ACK_1;
-
-    int sent = socket_.sendTo(buffer.data(), buffer.size(), destIP_, destPort_);
-    if (sent < 0)
-    {
-        printf("[RDT-SENDER] Loi khi gui goi tin (seq=%u)\n", currentSeq_);
-        return false;
-    }
-    printf("[RDT-SENDER] Da gui goi seq=%u (%zu byte payload)\n", currentSeq_, len);
-
-    // ---- Bước 2: Chờ ACK 
-    uint8_t recvBuf[2048];
-    std::string ackFromIP;
-    uint16_t ackFromPort;
-
-    int received = socket_.recvFrom(recvBuf, sizeof(recvBuf), ackFromIP, ackFromPort);
-    if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE))
-    {
-        printf("[RDT-SENDER] Khong nhan duoc ACK (timeout hoac loi).\n");
-        return false;
-    }
-
-    CustomUDPHeader ackHdr = deserializeHeader(recvBuf);
-    const uint8_t* ackPayload = recvBuf + CUSTOM_UDP_HEADER_SIZE;
-    size_t ackPayloadLen = static_cast<size_t>(received) - CUSTOM_UDP_HEADER_SIZE;
-
-    bool checksumOk = verifyChecksum(ackHdr, ackPayload, ackPayloadLen);
-    bool isAck = hasFlag(ackHdr, FLAG_ACK);
-    bool correctSeq = (ackHdr.ackNum == currentSeq_);
-
-    if (checksumOk && isAck && correctSeq)
-    {
-        printf("[RDT-SENDER] Nhan dung ACK(%u) -> thanh cong.\n", ackHdr.ackNum);
-        // Chuyển bit luân phiên + state cho lần gửi tiếp theo
-        currentSeq_ = 1 - currentSeq_;
-        state_ = (currentSeq_ == 0) ? SenderState::WAIT_CALL_0 : SenderState::WAIT_CALL_1;
-        return true;
-    }
-
-    printf("[RDT-SENDER] ACK khong hop le (checksumOk=%d, isAck=%d, ackNum=%u, mong doi=%u)\n",
-           checksumOk, isAck, ackHdr.ackNum, currentSeq_);
-    return false;
+    lastCwnd_     = ws.getFinalCwnd();
+    lastTimeouts_ = ws.getTotalTimeouts();
+    lastSegsSent_ = ws.getTotalPacketsSent();
+    return ok;
 }
 
+// ============================================================
 //  RDTReceiver
+// ============================================================
+
 RDTReceiver::RDTReceiver(UDPSocket& socket)
-    : socket_(socket), state_(ReceiverState::WAIT_SEQ_0),
-      expectedSeq_(0), lastAckSent_(1) 
+    : socket_(socket), expectedSeq_(0), lastAckSent_(UINT32_MAX)
 {
 }
 
-bool RDTReceiver::receivePacket(std::vector<uint8_t>& outData,
-                                 std::string& senderIP, uint16_t& senderPort)
+void RDTReceiver::sendRawAck(uint32_t ackNum, uint16_t windowSize,
+                              const std::string& ip, uint16_t port)
 {
-    uint8_t recvBuf[2048];
-    int received = socket_.recvFrom(recvBuf, sizeof(recvBuf), senderIP, senderPort);
+    CustomUDPHeader ack{};
+    ack.seqNum     = 0;
+    ack.ackNum     = ackNum;
+    ack.payloadLen = 0;
+    ack.windowSize = windowSize;
+    setFlag(ack, FLAG_ACK);
+    ack.checksum   = calculateChecksum(ack, nullptr, 0);
 
+    uint8_t buf[CUSTOM_UDP_HEADER_SIZE];
+    serializeHeader(ack, buf);
+    socket_.sendTo(buf, sizeof(buf), ip, port);
+}
+
+bool RDTReceiver::receiveBuffer(std::vector<uint8_t>& outBuffer)
+{
+    RDTWindowReceiver wr(socket_, advWindow_);
+    socket_.setRecvTimeout(timeoutMs_);
+
+    std::string senderIP;
+    uint16_t senderPort = 0;
+    return wr.receiveData(outBuffer, senderIP, senderPort);
+}
+
+bool RDTReceiver::receiveFile(const std::string& outputPath)
+{
+    std::vector<uint8_t> buffer;
+    if (!receiveBuffer(buffer))
+        return false;
+
+    std::ofstream ofs(outputPath, std::ios::binary);
+    if (!ofs.is_open())
+    {
+        fprintf(stderr, "[RDT-RECEIVER] Khong the ghi file: %s\n", outputPath.c_str());
+        return false;
+    }
+    ofs.write(reinterpret_cast<const char*>(buffer.data()),
+              static_cast<std::streamsize>(buffer.size()));
+    ofs.close();
+
+    printf("[RDT-RECEIVER] Da ghi %zu bytes ra file '%s'\n",
+           buffer.size(), outputPath.c_str());
+    return true;
+}
+
+// ---- Stop-and-Wait backward-compat ----
+bool RDTReceiver::receivePacket(std::vector<uint8_t>& outData,
+                                std::string& senderIP, uint16_t& senderPort)
+{
+    constexpr size_t BUF_SZ = CUSTOM_UDP_HEADER_SIZE + 4096;
+    uint8_t recvBuf[BUF_SZ];
+
+    int received = socket_.recvFrom(recvBuf, BUF_SZ, senderIP, senderPort);
     if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE))
     {
-        printf("[RDT-RECEIVER] Goi tin qua nho hoac loi nhan.\n");
+        printf("[RDT-RECEIVER] Goi qua nho hoac loi nhan.\n");
         return false;
     }
 
-    CustomUDPHeader hdr = deserializeHeader(recvBuf);
-    const uint8_t* payload = recvBuf + CUSTOM_UDP_HEADER_SIZE;
-    size_t payloadLen = static_cast<size_t>(received) - CUSTOM_UDP_HEADER_SIZE;
+    CustomUDPHeader hdr    = deserializeHeader(recvBuf);
+    const uint8_t*  payload    = recvBuf + CUSTOM_UDP_HEADER_SIZE;
+    size_t          payloadLen = static_cast<size_t>(received) - CUSTOM_UDP_HEADER_SIZE;
 
-    // ---- Kiem tra checksum
     if (!verifyChecksum(hdr, payload, payloadLen))
     {
-        printf("[RDT-RECEIVER] Checksum SAI (seq=%u) -> bo qua goi tin, khong gui ACK.\n",
-               hdr.seqNum);
+        printf("[RDT-RECEIVER] Checksum SAI (seq=%u)\n", hdr.seqNum);
         return false;
     }
 
-    // ---- Truong hop 1: Goi MOI dung thu tu dang mong doi ----
     if (hdr.seqNum == expectedSeq_)
     {
         outData.assign(payload, payload + payloadLen);
-
-        // Gui ACK cho goi vua nhan
-        CustomUDPHeader ackHdr{};
-        ackHdr.seqNum = 0;
-        ackHdr.ackNum = hdr.seqNum;
-        ackHdr.payloadLen = 0;
-        ackHdr.windowSize = 1;
-        setFlag(ackHdr, FLAG_ACK);
-        ackHdr.checksum = calculateChecksum(ackHdr, nullptr, 0);
-
-        uint8_t ackBuf[CUSTOM_UDP_HEADER_SIZE];
-        serializeHeader(ackHdr, ackBuf);
-        socket_.sendTo(ackBuf, sizeof(ackBuf), senderIP, senderPort);
-
-        printf("[RDT-RECEIVER] Nhan goi MOI seq=%u (%zu byte) -> da gui ACK(%u)\n",
+        sendRawAck(hdr.seqNum, advWindow_, senderIP, senderPort);
+        printf("[RDT-RECEIVER] Nhan goi MOI seq=%u (%zu B) -> ACK(%u)\n",
                hdr.seqNum, payloadLen, hdr.seqNum);
-
         lastAckSent_ = hdr.seqNum;
-        expectedSeq_ = 1 - expectedSeq_;
-        state_ = (expectedSeq_ == 0) ? ReceiverState::WAIT_SEQ_0 : ReceiverState::WAIT_SEQ_1;
+        ++expectedSeq_;
         return true;
     }
 
-    // ---- Truong hop 2: Goi TRUNG (da nhan roi, do ACK truoc bi mat) ----
-    printf("[RDT-RECEIVER] Nhan goi TRUNG seq=%u (mong doi=%u) -> gui lai ACK(%u), khong giao du lieu.\n",
-           hdr.seqNum, expectedSeq_, lastAckSent_);
-
-    CustomUDPHeader dupAckHdr{};
-    dupAckHdr.seqNum = 0;
-    dupAckHdr.ackNum = lastAckSent_;
-    dupAckHdr.payloadLen = 0;
-    dupAckHdr.windowSize = 1;
-    setFlag(dupAckHdr, FLAG_ACK);
-    dupAckHdr.checksum = calculateChecksum(dupAckHdr, nullptr, 0);
-
-    uint8_t dupAckBuf[CUSTOM_UDP_HEADER_SIZE];
-    serializeHeader(dupAckHdr, dupAckBuf);
-    socket_.sendTo(dupAckBuf, sizeof(dupAckBuf), senderIP, senderPort);
-
+    printf("[RDT-RECEIVER] Goi TRUNG seq=%u (mong doi=%u) -> gui lai ACK(%u)\n",
+           hdr.seqNum, expectedSeq_,
+           (lastAckSent_ == UINT32_MAX) ? 0u : lastAckSent_);
+    if (lastAckSent_ != UINT32_MAX)
+        sendRawAck(lastAckSent_, advWindow_, senderIP, senderPort);
     return false;
 }

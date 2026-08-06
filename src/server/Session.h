@@ -1,12 +1,15 @@
 #pragma once
 #include "../common/PathManager.h"
+#include "../rdt/UDPSocket.h"
 #include <optional>
 #include <string>
+#include <memory>
 struct ServerState;
 enum class TransferType { ASCII, Binary };
 
 enum class TransferMode { Stream };
 enum class LoginState { NotLoggedIn, UsernameAccepted, LoggedIn };
+enum class DataMode { NONE, ACTIVE, PASSIVE };
 
 struct SessionState {
   LoginState loginState = LoginState::NotLoggedIn;
@@ -17,6 +20,12 @@ struct SessionState {
 
   // Lưu đường dẫn từ lệnh RNFR cho riêng từng client.
   std::optional<std::string> renameFrom;
+
+  // Trạng thái data channel cho Dev 3
+  DataMode dataMode = DataMode::NONE;
+  std::string activeIP;
+  uint16_t activePort = 0;
+  std::unique_ptr<UDPSocket> passiveSocket = nullptr;
 };
 struct SessionArgs {
   ServerState *state;

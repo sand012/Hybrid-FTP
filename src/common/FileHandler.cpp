@@ -16,8 +16,8 @@ bool FileHandler::readBinaryFile(const std::string& filepath, std::vector<char>&
     return false;
 }
 
-bool FileHandler::writeBinaryFile(const std::string& filepath, const char* data, size_t size) {
-    std::ofstream file(filepath, std::ios::binary);
+bool FileHandler::writeBinaryFile(const std::string& filepath, const char* data, size_t size, bool append) {
+    std::ofstream file(filepath, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
     if (!file.is_open()) return false;
     
     file.write(data, size);
@@ -32,8 +32,8 @@ bool FileHandler::readTextFile(const std::string& filepath, std::string& content
     return true;
 }
 
-bool FileHandler::writeTextFile(const std::string& filepath, const std::string& content) {
-    std::ofstream file(filepath);
+bool FileHandler::writeTextFile(const std::string& filepath, const std::string& content, bool append) {
+    std::ofstream file(filepath, std::ios::out | (append ? std::ios::app : std::ios::trunc));
     if (!file.is_open()) return false;
     
     file << content;

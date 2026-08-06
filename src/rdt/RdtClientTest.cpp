@@ -2,6 +2,7 @@
 #include "ReliableTransfer.h"
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 // ============================================================
 //  Demo Client dung RDT (Stop-and-Wait): gui 3 goi du lieu that,
@@ -9,10 +10,12 @@
 //  ACK bi that lac tren mang that / hoac sender gui du) de
 //  server chung minh no phat hien goi TRUNG va khong giao lai.
 // ============================================================
-int main()
+int main(int argc, char* argv[])
 {
-    const std::string SERVER_IP = "127.0.0.1";
-    const uint16_t SERVER_PORT = 9000;
+    const std::string SERVER_IP   = "127.0.0.1";
+    const uint16_t   SERVER_PORT  = (argc >= 2)
+                                    ? static_cast<uint16_t>(std::atoi(argv[1]))
+                                    : 9299;
 
     UDPSocket socket;
     socket.open();

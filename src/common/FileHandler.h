@@ -10,13 +10,13 @@ public:
     static bool readBinaryFile(const std::string& filepath, std::vector<char>& buffer);
     
     // Ghi file nhị phân (Binary mode)
-    static bool writeBinaryFile(const std::string& filepath, const char* data, size_t size);
+    static bool writeBinaryFile(const std::string& filepath, const char* data, size_t size, bool append = false);
     
     // Đọc file văn bản (ASCII mode)
     static bool readTextFile(const std::string& filepath, std::string& content);
     
     // Ghi file văn bản (ASCII mode)
-    static bool writeTextFile(const std::string& filepath, const std::string& content);
+    static bool writeTextFile(const std::string& filepath, const std::string& content, bool append = false);
     
     // Kiểm tra file có tồn tại hay không
     static bool fileExists(const std::string& filepath);

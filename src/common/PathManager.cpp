@@ -725,3 +725,32 @@ bool PathManager::renamePath(
 
     return !error;
 }
+
+bool PathManager::isPathInsideRoot(const std::string &path) const {
+    return isInsideRoot(resolvePath(path));
+}
+
+std::string PathManager::generateUniqueFilename(const std::string &baseName) const {
+    fs::path base(baseName);
+    fs::path dir = base.parent_path();
+    std::string stem = base.stem().string();
+    std::string ext = base.extension().string();
+    
+    std::string testName = baseName;
+    int counter = 1;
+    while (true) {
+        fs::path target = resolvePath(testName);
+        std::error_code ec;
+        if (!fs::exists(target, ec)) {
+            return testName;
+        }
+        std::string suffix = "_" + std::to_string(counter);
+        if (dir.empty()) {
+            testName = stem + suffix + ext;
+        } else {
+            testName = (dir / (stem + suffix + ext)).string();
+        }
+        counter++;
+    }
+}
+

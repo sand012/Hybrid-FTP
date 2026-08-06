@@ -5,20 +5,30 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
  
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
-
+# ============================================================
+#  Core library — RDT + common utilities
+# ============================================================
 add_library(HybridFTP_Core
     src/rdt/UDPSocket.cpp
     src/rdt/CustomHeader.cpp
-    src/rdt/ReliableTransfer.cpp
+    src/rdt/SlidingWindow.cpp      # Flow Control + Congestion Control (GBN + Slow Start + AIMD)
+    src/rdt/ReliableTransfer.cpp   # Wrapper: RDTSender/RDTReceiver -> RDTWindowSender/Receiver
     src/common/CommandParser.cpp
     src/common/CryptoHash.cpp
     src/common/FileHandler.cpp
     src/common/TCPControl.cpp
 )
+target_include_directories(HybridFTP_Core PUBLIC
+    src/rdt
+    src/common
+)
+target_link_libraries(HybridFTP_Core PRIVATE Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
 
-target_link_libraries(HybridFTP_Core PRIVATE Threads::Threads)
-
+# ============================================================
+#  FTP Server & Client
+# ============================================================
 add_executable(ftp_server
     src/server/main_server.cpp
     src/server/ServerManager.cpp
@@ -26,13 +36,53 @@ add_executable(ftp_server
     src/common/CommandParser.cpp
     src/common/PathManager.cpp
 )
-target_link_libraries(ftp_server PRIVATE Threads::Threads HybridFTP_Core)
+target_link_libraries(ftp_server PRIVATE Threads::Threads HybridFTP_Core OpenSSL::SSL OpenSSL::Crypto)
  
 add_executable(ftp_client
     src/client/main_client.cpp
     src/client/ClientCLI.cpp
 )
-target_link_libraries(ftp_client PRIVATE Threads::Threads HybridFTP_Core)
+target_include_directories(ftp_client PRIVATE src/rdt src/common)
+target_link_libraries(ftp_client PRIVATE Threads::Threads HybridFTP_Core OpenSSL::SSL OpenSSL::Crypto)
+
+# ============================================================
+#  RDT File Transfer — nghiệm thu Sliding Window (Go-Back-N)
+# ============================================================
+add_executable(rdt_file_server
+    src/rdt/FileTransferServer.cpp
+)
+target_include_directories(rdt_file_server PRIVATE src/rdt)
+target_link_libraries(rdt_file_server PRIVATE HybridFTP_Core)
+
+add_executable(rdt_file_client
+    src/rdt/FileTransferClient.cpp
+)
+target_include_directories(rdt_file_client PRIVATE src/rdt)
+target_link_libraries(rdt_file_client PRIVATE HybridFTP_Core)
+
+# ============================================================
+#  RDT Stop-and-Wait Demo (backward-compat test)
+# ============================================================
+add_executable(rdt_saw_server
+    src/rdt/RdtSeverTest.cpp
+)
+target_include_directories(rdt_saw_server PRIVATE src/rdt)
+target_link_libraries(rdt_saw_server PRIVATE HybridFTP_Core)
+
+add_executable(rdt_saw_client
+    src/rdt/RdtClientTest.cpp
+)
+target_include_directories(rdt_saw_client PRIVATE src/rdt)
+target_link_libraries(rdt_saw_client PRIVATE HybridFTP_Core)
+
+# ============================================================
+#  Dev 3 — End-to-End Integration Test
+# ============================================================
+add_executable(test_e2e_dev3
+    src/client/test_e2e_dev3.cpp
+)
+target_include_directories(test_e2e_dev3 PRIVATE src/rdt src/common)
+target_link_libraries(test_e2e_dev3 PRIVATE HybridFTP_Core OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
 include(CTest)
 
@@ -44,3 +94,5 @@ if(BUILD_TESTING)
     target_include_directories(path_manager_listing_test PRIVATE src/common)
     add_test(NAME path_manager_listing_test COMMAND path_manager_listing_test)
 endif()
+
+
