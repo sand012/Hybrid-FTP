@@ -121,7 +121,7 @@ static bool handle_help_command(int fd, const std::string &argument) {
       {"RNFR", "RNFR <oldname>"},
       {"RNTO", "RNTO <newname>"},
       {"TYPE", "TYPE {A | I}"},
-      {"MODE", "MODE {S | B | C}"},
+      {"MODE", "MODE S"},
       {"PORT", "PORT <h1,h2,h3,h4,p1,p2>"},
       {"PASV", "PASV"},
       {"RETR", "RETR <filename>"},
@@ -132,6 +132,7 @@ static bool handle_help_command(int fd, const std::string &argument) {
       {"ABOR", "ABOR"},
       {"HELP", "HELP [command]"}};
 
+  // HELP
   if (argument.empty()) {
     return send_reply(fd, "214-The following commands are recognized:\r\n"
                           " USER PASS QUIT NOOP HELP\r\n"
@@ -144,19 +145,22 @@ static bool handle_help_command(int fd, const std::string &argument) {
                           "214 End of HELP.\r\n");
   }
 
-  const ParsedCommand requested = CommandParser::parse(argument);
+  // Chuyển argument thành chữ hoa
+  std::string command = argument;
 
-  if (!requested.valid || !requested.argument.empty()) {
-    return send_reply(fd, "501 HELP accepts one command name only.\r\n");
+  for (char &c : command) {
+    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
   }
 
-  const auto iterator = syntaxTable.find(requested.name);
+  // HELP <command>
+  const auto it = syntaxTable.find(command);
 
-  if (iterator == syntaxTable.end()) {
-    return send_reply(fd, "502 Help unavailable for that command.\r\n");
+  if (it != syntaxTable.end()) {
+    return send_reply(fd, "214 Syntax: " + it->second + "\r\n");
   }
 
-  return send_reply(fd, "214 Syntax: " + iterator->second + "\r\n");
+  // Command không tồn tại
+  return send_reply(fd, "502 Unknown command: " + command + "\r\n");
 }
 /**
  * Xử lý một lệnh FTP.
@@ -414,8 +418,8 @@ static bool handle_command(int fd, const std::string &line,
                          std::string(session.transferType == TransferType::ASCII
                                          ? "ASCII"
                                          : "Binary") +
-                     "\r\n MODE: Stream\r\n"
-                     "211 End of status.\r\n");
+                         "\r\n MODE: Stream\r\n"
+                         "211 End of status.\r\n");
       return false;
     }
 
@@ -427,12 +431,11 @@ static bool handle_command(int fd, const std::string &line,
     }
 
     const std::string code = status->isDirectory ? "212" : "213";
-    const std::string subject = status->isDirectory
-                                    ? "Directory status follows"
-                                    : "File status follows";
+    const std::string subject = status->isDirectory ? "Directory status follows"
+                                                    : "File status follows";
 
-    send_reply(fd, code + "-" + subject + ".\r\n" + status->listing +
-                       code + " End of status.\r\n");
+    send_reply(fd, code + "-" + subject + ".\r\n" + status->listing + code +
+                       " End of status.\r\n");
 
     return false;
   }
@@ -538,6 +541,52 @@ static bool handle_command(int fd, const std::string &line,
 
     send_reply(fd, "250 Rename successful.\r\n");
 
+    return false;
+  }
+  if (command.name == "RETR") {
+    if (command.argument.empty()) {
+      send_reply(fd, "501 Missing filename.\r\n");
+      return false;
+    }
+
+    const auto fileSize = session.pathManager.getFileSize(command.argument);
+
+    if (!fileSize.has_value()) {
+      send_reply(fd, "550 File unavailable or access denied.\r\n");
+      return false;
+    }
+
+    send_reply(fd, "150 File status okay; opening data connection.\r\n");
+
+    const bool success =
+        // hàm tích hợp của Dev 2/3
+
+        // if (!success) {
+        //   send_reply(fd, "426 Connection closed; transfer aborted.\r\n");
+        //   return false;
+        // }
+
+        send_reply(fd, "226 Transfer complete.\r\n");
+    return false;
+  }
+  if (command.name == "STOR") {
+    if (command.argument.empty()) {
+      send_reply(fd, "501 Missing filename.\r\n");
+      return false;
+    }
+
+    send_reply(fd, "150 File status okay; opening data connection.\r\n");
+
+    // const bool success =
+    //     receiveFileOverDataChannel(session,
+    //                                command.argument); // Dev 2/3
+
+    // if (!success) {
+    //   send_reply(fd, "426 Connection closed; transfer aborted.\r\n");
+    //   return false;
+    // }
+
+    send_reply(fd, "226 Transfer complete.\r\n");
     return false;
   }
   send_reply(fd, "502 Command not implemented.\r\n");
