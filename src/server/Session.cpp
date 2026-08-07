@@ -1,23 +1,23 @@
 #include "Session.h"
 #include "../common/CommandParser.h"
-#include "ServerManager.h"
-#include "../rdt/ReliableTransfer.h"
 #include "../common/CryptoHash.h"
 #include "../common/FileHandler.h"
+#include "../rdt/ReliableTransfer.h"
+#include "ServerManager.h"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <filesystem>
 #include <vector>
-#include <stdexcept>
 
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 
 /**
  * Đọc một dòng lệnh từ TCP socket.
@@ -340,30 +340,31 @@ static bool handle_command(int fd, const std::string &line,
       send_reply(fd, "501 Missing IP and port.\r\n");
       return false;
     }
-    
+
     unsigned int h1, h2, h3, h4, p1, p2;
-    if (std::sscanf(command.argument.c_str(), "%u,%u,%u,%u,%u,%u", &h1, &h2, &h3, &h4, &p1, &p2) != 6) {
+    if (std::sscanf(command.argument.c_str(), "%u,%u,%u,%u,%u,%u", &h1, &h2,
+                    &h3, &h4, &p1, &p2) != 6) {
       send_reply(fd, "501 Invalid PORT format.\r\n");
       return false;
     }
-    
+
     if (h1 > 255 || h2 > 255 || h3 > 255 || h4 > 255 || p1 > 255 || p2 > 255) {
       send_reply(fd, "501 Invalid IP/port values.\r\n");
       return false;
     }
-    
+
     char ip[64];
     std::snprintf(ip, sizeof(ip), "%u.%u.%u.%u", h1, h2, h3, h4);
     session.activeIP = ip;
     session.activePort = static_cast<uint16_t>((p1 << 8) | p2);
     session.dataMode = DataMode::ACTIVE;
-    
+
     // Clean up passive socket if any
     if (session.passiveSocket) {
       session.passiveSocket->close();
       session.passiveSocket.reset();
     }
-    
+
     send_reply(fd, "200 PORT command successful.\r\n");
     return false;
   }
@@ -373,27 +374,31 @@ static bool handle_command(int fd, const std::string &line,
     try {
       udpSock->open();
       udpSock->bind(0);
-    } catch (const std::exception& e) {
-      std::fprintf(stderr, "[Session] Failed to open/bind UDP socket: %s\n", e.what());
+    } catch (const std::exception &e) {
+      std::fprintf(stderr, "[Session] Failed to open/bind UDP socket: %s\n",
+                   e.what());
       send_reply(fd, "425 Cannot open passive connection.\r\n");
       return false;
     }
-    
+
     uint16_t port = udpSock->getLocalPort();
     std::string ip = get_socket_ip(fd);
     for (char &c : ip) {
-      if (c == '.') c = ',';
+      if (c == '.')
+        c = ',';
     }
-    
+
     unsigned char p1 = static_cast<unsigned char>((port >> 8) & 0xFF);
     unsigned char p2 = static_cast<unsigned char>(port & 0xFF);
-    
+
     char replyBuf[128];
-    std::snprintf(replyBuf, sizeof(replyBuf), "227 Entering Passive Mode (%s,%u,%u).\r\n", ip.c_str(), p1, p2);
-    
+    std::snprintf(replyBuf, sizeof(replyBuf),
+                  "227 Entering Passive Mode (%s,%u,%u).\r\n", ip.c_str(), p1,
+                  p2);
+
     session.passiveSocket = std::move(udpSock);
     session.dataMode = DataMode::PASSIVE;
-    
+
     send_reply(fd, replyBuf);
     return false;
   }
@@ -473,7 +478,193 @@ static bool handle_command(int fd, const std::string &line,
     return false;
   }
   // IMPLEMENT HERE
+  auto open_data_channel = [&](UDPSocket *&dataSocket, std::string &peerIP,
+                               uint16_t &peerPort, bool &ownsSocket) -> bool {
+    if (session.dataMode == DataMode::PASSIVE) {
+      if (!session.passiveSocket) {
+        send_reply(fd, "425 No passive socket available.\r\n");
+        return false;
+      }
+      dataSocket = session.passiveSocket.get();
+      ownsSocket = false; // session owns it
+      // For passive mode, peerIP/peerPort will be learned on first receive
+      peerIP = "";
+      peerPort = 0;
+      return true;
+    } else if (session.dataMode == DataMode::ACTIVE) {
+      if (session.activeIP.empty() || session.activePort == 0) {
+        send_reply(fd, "425 Use PORT or PASV first.\r\n");
+        return false;
+      }
+      // Active mode: server creates a fresh UDP socket and sends to client's
+      // IP:port
+      auto *sock = new UDPSocket();
+      try {
+        sock->open();
+        sock->bind(0);
+      } catch (const std::exception &e) {
+        delete sock;
+        send_reply(fd, "425 Cannot open data connection.\r\n");
+        return false;
+      }
+      dataSocket = sock;
+      ownsSocket = true;
+      peerIP = session.activeIP;
+      peerPort = session.activePort;
+      return true;
+    } else {
+      send_reply(fd, "425 Use PORT or PASV first.\r\n");
+      return false;
+    }
+  };
+  auto sendBufferOverDataChannel = [&](const std::string &data) -> bool {
+    UDPSocket *dataSocket = nullptr;
+    std::string peerIP;
+    uint16_t peerPort = 0;
+    bool ownsSocket = false;
+
+    if (!open_data_channel(dataSocket, peerIP, peerPort, ownsSocket)) {
+      return false;
+    }
+
+    /*
+     * ACTIVE:
+     * Server đã biết IP + port của client từ PORT.
+     */
+    if (session.dataMode == DataMode::ACTIVE) {
+
+      RDTSender sender(*dataSocket, peerIP, peerPort);
+
+      const bool ok = sender.sendBuffer(
+          reinterpret_cast<const uint8_t *>(data.data()), data.size());
+
+      if (ownsSocket) {
+        dataSocket->close();
+        delete dataSocket;
+      }
+
+      return ok;
+    }
+
+    /*
+     * PASSIVE:
+     * Server chỉ biết port UDP của chính nó.
+     * Cần nhận một datagram từ client trước để học
+     * IP + UDP port của client.
+     */
+    if (session.dataMode == DataMode::PASSIVE) {
+
+      uint8_t handshakeBuffer[CUSTOM_UDP_HEADER_SIZE + 64];
+
+      std::string fromIP;
+      uint16_t fromPort = 0;
+
+      dataSocket->setRecvTimeout(10000);
+
+      const int received = dataSocket->recvFrom(
+          handshakeBuffer, sizeof(handshakeBuffer), fromIP, fromPort);
+
+      if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE)) {
+
+        session.passiveSocket.reset();
+        session.dataMode = DataMode::NONE;
+
+        return false;
+      }
+
+      peerIP = fromIP;
+      peerPort = fromPort;
+
+      RDTSender sender(*dataSocket, peerIP, peerPort);
+
+      const bool ok = sender.sendBuffer(
+          reinterpret_cast<const uint8_t *>(data.data()), data.size());
+
+      /*
+       * PASV socket chỉ dùng cho một transfer.
+       * Transfer tiếp theo client phải PASV lại.
+       */
+      session.passiveSocket.reset();
+      session.dataMode = DataMode::NONE;
+
+      return ok;
+    }
+
+    return false;
+  };
+  auto sendTextOverDataChannel = [&](const std::string &text) -> bool {
+    UDPSocket *dataSocket = nullptr;
+    std::string peerIP;
+    uint16_t peerPort = 0;
+    bool ownsSocket = false;
+
+    if (!open_data_channel(dataSocket, peerIP, peerPort, ownsSocket)) {
+      return false;
+    }
+
+    // =========================
+    // ACTIVE MODE
+    // =========================
+    if (session.dataMode == DataMode::ACTIVE) {
+
+      RDTSender sender(*dataSocket, peerIP, peerPort);
+
+      bool ok = sender.sendBuffer(
+          reinterpret_cast<const uint8_t *>(text.data()), text.size());
+
+      if (ownsSocket) {
+        dataSocket->close();
+        delete dataSocket;
+      }
+
+      return ok;
+    }
+
+    // =========================
+    // PASSIVE MODE
+    // =========================
+    if (session.dataMode == DataMode::PASSIVE) {
+
+      /*
+       * Server chưa biết UDP port của client.
+       * Client gửi một knock trước để server học IP/port.
+       */
+      uint8_t knockBuffer[CUSTOM_UDP_HEADER_SIZE + 64];
+
+      std::string fromIP;
+      uint16_t fromPort = 0;
+
+      dataSocket->setRecvTimeout(10000);
+
+      int received = dataSocket->recvFrom(knockBuffer, sizeof(knockBuffer),
+                                          fromIP, fromPort);
+
+      if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE)) {
+
+        session.passiveSocket.reset();
+        session.dataMode = DataMode::NONE;
+
+        return false;
+      }
+
+      peerIP = fromIP;
+      peerPort = fromPort;
+
+      RDTSender sender(*dataSocket, peerIP, peerPort);
+
+      bool ok = sender.sendBuffer(
+          reinterpret_cast<const uint8_t *>(text.data()), text.size());
+
+      session.passiveSocket.reset();
+      session.dataMode = DataMode::NONE;
+
+      return ok;
+    }
+
+    return false;
+  };
   if (command.name == "LIST") {
+
     const auto listing = session.pathManager.listDirectory(command.argument);
 
     if (!listing.has_value()) {
@@ -481,32 +672,68 @@ static bool handle_command(int fd, const std::string &line,
       return false;
     }
 
-    send_reply(fd, "150 Opening data connection for directory list.\r\n");
+    if (session.dataMode == DataMode::NONE) {
+      send_reply(fd, "425 Use PORT or PASV first.\r\n");
+      return false;
+    }
 
-    // TODO Ngày 8:
-    // gửi listing.value() qua UDP/RDT data channel
+    if (!send_reply(fd,
+                    "150 Opening data connection for directory list.\r\n")) {
+      return false;
+    }
+
+    bool ok = sendTextOverDataChannel(listing.value());
+
+    if (!ok) {
+      send_reply(fd, "426 Connection closed; directory transfer aborted.\r\n");
+      return false;
+    }
 
     send_reply(fd, "226 Directory transfer complete.\r\n");
 
     return false;
   }
   if (command.name == "NLST") {
-    const auto listing = session.pathManager.listNames(command.argument);
+
+    const auto listing =
+        session.pathManager.listNames(command.argument);
 
     if (!listing.has_value()) {
-      send_reply(fd, "550 Path unavailable or access denied.\r\n");
-      return false;
+        send_reply(
+            fd,
+            "550 Path unavailable or access denied.\r\n"
+        );
+        return false;
     }
 
-    send_reply(fd, "150 Opening data connection for name list.\r\n");
+    if (session.dataMode == DataMode::NONE) {
+        send_reply(fd, "425 Use PORT or PASV first.\r\n");
+        return false;
+    }
 
-    // TODO Ngày 8:
-    // gửi listing.value() qua UDP/RDT data channel
+    if (!send_reply(
+            fd,
+            "150 Opening data connection for name list.\r\n")) {
+        return false;
+    }
 
-    send_reply(fd, "226 Directory transfer complete.\r\n");
+    bool ok = sendTextOverDataChannel(listing.value());
+
+    if (!ok) {
+        send_reply(
+            fd,
+            "426 Connection closed; directory transfer aborted.\r\n"
+        );
+        return false;
+    }
+
+    send_reply(
+        fd,
+        "226 Directory transfer complete.\r\n"
+    );
 
     return false;
-  }
+}
   if (command.name == "STAT") {
     if (command.argument.empty()) {
       send_reply(fd, "211-Hybrid FTP server status:\r\n"
@@ -645,45 +872,6 @@ static bool handle_command(int fd, const std::string &line,
   // Trả về true nếu thành công, false nếu lỗi.
   // Hàm sẽ thiết lập conn_sock và conn_ip/conn_port cho caller.
   // ============================================================
-  auto open_data_channel =
-      [&](UDPSocket *&dataSocket, std::string &peerIP, uint16_t &peerPort,
-          bool &ownsSocket) -> bool {
-    if (session.dataMode == DataMode::PASSIVE) {
-      if (!session.passiveSocket) {
-        send_reply(fd, "425 No passive socket available.\r\n");
-        return false;
-      }
-      dataSocket = session.passiveSocket.get();
-      ownsSocket = false; // session owns it
-      // For passive mode, peerIP/peerPort will be learned on first receive
-      peerIP = "";
-      peerPort = 0;
-      return true;
-    } else if (session.dataMode == DataMode::ACTIVE) {
-      if (session.activeIP.empty() || session.activePort == 0) {
-        send_reply(fd, "425 Use PORT or PASV first.\r\n");
-        return false;
-      }
-      // Active mode: server creates a fresh UDP socket and sends to client's IP:port
-      auto *sock = new UDPSocket();
-      try {
-        sock->open();
-        sock->bind(0);
-      } catch (const std::exception &e) {
-        delete sock;
-        send_reply(fd, "425 Cannot open data connection.\r\n");
-        return false;
-      }
-      dataSocket = sock;
-      ownsSocket = true;
-      peerIP = session.activeIP;
-      peerPort = session.activePort;
-      return true;
-    } else {
-      send_reply(fd, "425 Use PORT or PASV first.\r\n");
-      return false;
-    }
-  };
 
   // ============================================================
   // RETR — Server gửi file đến client qua RDT data channel
@@ -727,7 +915,8 @@ static bool handle_command(int fd, const std::string &line,
     }
 
     // Set peer for ACTIVE mode (PASSIVE learns peer from first receive)
-    if (session.dataMode == DataMode::ACTIVE && !peerIP.empty() && peerPort != 0) {
+    if (session.dataMode == DataMode::ACTIVE && !peerIP.empty() &&
+        peerPort != 0) {
       RDTSender sender(*dataSocket, peerIP, peerPort);
       bool ok = sender.sendFile(resolvedStr);
 
@@ -757,7 +946,8 @@ static bool handle_command(int fd, const std::string &line,
         std::string fromIP;
         uint16_t fromPort = 0;
         dataSocket->setRecvTimeout(10000);
-        int r = dataSocket->recvFrom(peekBuf, sizeof(peekBuf), fromIP, fromPort);
+        int r =
+            dataSocket->recvFrom(peekBuf, sizeof(peekBuf), fromIP, fromPort);
         if (r < static_cast<int>(CUSTOM_UDP_HEADER_SIZE)) {
           send_reply(fd, "425 No connection from client on passive port.\r\n");
           if (ownsSocket) {
@@ -792,8 +982,8 @@ static bool handle_command(int fd, const std::string &line,
   // Helper: receive file via data channel and write to disk
   // ============================================================
   auto receiveFileOverDataChannel = [&](const std::string &destName,
-                                         bool appendMode,
-                                         bool skipOpeningReply = false) -> bool {
+                                        bool appendMode,
+                                        bool skipOpeningReply = false) -> bool {
     UDPSocket *dataSocket = nullptr;
     std::string peerIP;
     uint16_t peerPort = 0;
@@ -843,12 +1033,13 @@ static bool handle_command(int fd, const std::string &line,
       }
       bool wrote = false;
       if (session.transferType == TransferType::Binary) {
-        wrote = FileHandler::writeBinaryFile(resolvedPath.string(),
-                                             reinterpret_cast<const char *>(buf.data()),
-                                             buf.size(), appendMode);
+        wrote = FileHandler::writeBinaryFile(
+            resolvedPath.string(), reinterpret_cast<const char *>(buf.data()),
+            buf.size(), appendMode);
       } else {
         std::string text(buf.begin(), buf.end());
-        wrote = FileHandler::writeTextFile(resolvedPath.string(), text, appendMode);
+        wrote =
+            FileHandler::writeTextFile(resolvedPath.string(), text, appendMode);
       }
       if (!wrote) {
         send_reply(fd, "551 Failed to write file.\r\n");
@@ -866,12 +1057,13 @@ static bool handle_command(int fd, const std::string &line,
       }
       bool wrote = false;
       if (session.transferType == TransferType::Binary) {
-        wrote = FileHandler::writeBinaryFile(resolvedPath.string(),
-                                             reinterpret_cast<const char *>(buf.data()),
-                                             buf.size(), appendMode);
+        wrote = FileHandler::writeBinaryFile(
+            resolvedPath.string(), reinterpret_cast<const char *>(buf.data()),
+            buf.size(), appendMode);
       } else {
         std::string text(buf.begin(), buf.end());
-        wrote = FileHandler::writeTextFile(resolvedPath.string(), text, appendMode);
+        wrote =
+            FileHandler::writeTextFile(resolvedPath.string(), text, appendMode);
       }
       if (!wrote) {
         send_reply(fd, "551 Failed to write file.\r\n");
@@ -879,7 +1071,8 @@ static bool handle_command(int fd, const std::string &line,
       }
     }
 
-    const std::string hash = CryptoHash::computeSHA256FromFile(resolvedPath.string());
+    const std::string hash =
+        CryptoHash::computeSHA256FromFile(resolvedPath.string());
     std::printf("[Session] SHA-256 sau khi STOR/APPE: %s\n", hash.c_str());
     send_reply(fd, "226 Transfer complete.\r\n");
     return true;
@@ -905,7 +1098,7 @@ static bool handle_command(int fd, const std::string &line,
         command.argument.empty() ? "upload" : command.argument;
     const std::string uniqueName =
         session.pathManager.generateUniqueFilename(baseName);
-    
+
     // Inform client of the unique name (RFC 959: 125 reply with filename)
     send_reply(fd, "125 FILE: " + uniqueName + "\r\n");
     // skipOpeningReply=true because we already sent 125
