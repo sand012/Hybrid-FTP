@@ -60,20 +60,7 @@ add_executable(rdt_file_client
 target_include_directories(rdt_file_client PRIVATE src/rdt)
 target_link_libraries(rdt_file_client PRIVATE HybridFTP_Core)
 
-# ============================================================
-#  RDT Stop-and-Wait Demo (backward-compat test)
-# ============================================================
-add_executable(rdt_saw_server
-    src/rdt/RdtSeverTest.cpp
-)
-target_include_directories(rdt_saw_server PRIVATE src/rdt)
-target_link_libraries(rdt_saw_server PRIVATE HybridFTP_Core)
 
-add_executable(rdt_saw_client
-    src/rdt/RdtClientTest.cpp
-)
-target_include_directories(rdt_saw_client PRIVATE src/rdt)
-target_link_libraries(rdt_saw_client PRIVATE HybridFTP_Core)
 
 # ============================================================
 #  Dev 3 — End-to-End Integration Test
