@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -26,6 +27,15 @@ public:
 
     void run();
 
+    /**
+     * Gọi từ signal handler (SIGINT/SIGTERM) để yêu cầu CLI thoát sạch.
+     * CLI sẽ gửi ABOR rồi QUIT trong lần lặp tiếp theo.
+     */
+    void notifyAbort();
+
+    /** Trả về true nếu đã nhận tín hiệu abort. */
+    bool isAborted() const { return m_aborted.load(); }
+
 private:
     void printPrompt() const;
     static std::string trim(const std::string& s);
@@ -42,7 +52,8 @@ private:
     // Cũng set serverIP_ từ reply.
     uint16_t parsePasvReply(const std::string& reply, std::string& outIP) const;
 
-    CommandSender m_sendCommand;
-    int           m_controlSock;  // TCP fd — dùng để lấy server IP
-    std::string   m_serverHost;   // IP server (lấy từ socket hoặc argv)
+    CommandSender        m_sendCommand;
+    int                  m_controlSock;  // TCP fd — dùng để lấy server IP
+    std::string          m_serverHost;   // IP server (lấy từ socket hoặc argv)
+    std::atomic<bool>    m_aborted{false}; // set true khi nhận SIGINT/SIGTERM
 };

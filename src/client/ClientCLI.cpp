@@ -5,6 +5,7 @@
 
 #include <arpa/inet.h>
 #include <cctype>
+#include <csignal>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -218,16 +219,37 @@ std::string ClientCLI::handleStor(const std::string& localFile,
 }
 
 // ============================================================
+//  notifyAbort() — gọi từ signal handler để yêu cầu dừng vòng lặp
+// ============================================================
+void ClientCLI::notifyAbort()
+{
+    m_aborted.store(true);
+}
+
+// ============================================================
 //  run() — main REPL
 // ============================================================
 void ClientCLI::run()
 {
     std::string line;
     while (true) {
+        // Kiểm tra cờ abort (SIGINT/SIGTERM) trước mỗi lần đọc lệnh
+        if (m_aborted.load()) {
+            std::cout << "\n[CLIENT] Nhận tín hiệu ngắt. Đang gửi ABOR...\n";
+            m_sendCommand("ABOR");
+            std::cout << "[CLIENT] Đang gửi QUIT...\n";
+            m_sendCommand("QUIT");
+            break;
+        }
+
         printPrompt();
 
         if (!std::getline(std::cin, line)) {
-            std::cout << "\n";
+            // EOF (Ctrl+D) — thoát sạch
+            std::cout << "\n[CLIENT] EOF — đang thoát...\n";
+            if (!m_aborted.load()) {
+                m_sendCommand("QUIT");
+            }
             break;
         }
 

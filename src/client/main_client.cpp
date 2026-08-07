@@ -1,6 +1,7 @@
 #include "ClientCLI.h"
 
 #include <arpa/inet.h>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
@@ -87,6 +88,24 @@ std::string recvReply(int sock) {
 
 }  // namespace
 
+// ============================================================
+//  Signal handling — SIGINT (Ctrl+C) và SIGTERM
+//
+//  Con trỏ toàn cục g_cli trỏ đến ClientCLI đang chạy.
+//  Signal handler gọi notifyAbort() và đặt failbit cho stdin
+//  để getline() trong run() thoát ra ngay lập tức.
+// ============================================================
+static ClientCLI* g_cli = nullptr;
+
+static void signalHandler(int signo) {
+    (void)signo;  // tránh unused-parameter warning
+    if (g_cli) {
+        g_cli->notifyAbort();
+    }
+    // Đặt failbit cho stdin để getline() trả về false ngay
+    std::cin.setstate(std::ios::failbit);
+}
+
 int main(int argc, char* argv[]) {
     std::string host = "127.0.0.1";
     int port = 2121;
@@ -108,7 +127,17 @@ int main(int argc, char* argv[]) {
         sock
     );
 
+    // Đăng ký signal handler SAU khi cli đã được tạo
+    g_cli = &cli;
+    std::signal(SIGINT,  signalHandler);
+    std::signal(SIGTERM, signalHandler);
+
     cli.run();
+
+    // Hủy đăng ký trước khi cli bị hủy
+    g_cli = nullptr;
+    std::signal(SIGINT,  SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
 
     close(sock);
     return 0;
