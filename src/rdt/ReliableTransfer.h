@@ -43,10 +43,12 @@ public:
     void setMaxWindowSegments(uint32_t w)    { maxWinSegs_  = w;           }
 
 
-    // ---- Thống kê sau lần gửi (chỉ áp dụng cho sendFile/sendBuffer) ----
+    // ---- Thống kê sau lần gửi ----
     double   getFinalCwnd()      const { return lastCwnd_;       }
     int      getTotalTimeouts()  const { return lastTimeouts_;   }
     uint32_t getTotalSegsSent()  const { return lastSegsSent_;   }
+    // Số lần retransmit thực tế trong lần sendPacket() gần nhất (0 = thành công ngay)
+    int      getRetryCount()     const { return retryCount_;     }
 
 private:
     // Tạo RDTWindowSender theo tham số hiện tại rồi chạy
@@ -69,6 +71,8 @@ private:
     double   lastCwnd_     = 1.0;
     int      lastTimeouts_ = 0;
     uint32_t lastSegsSent_ = 0;
+    // Số lần retransmit thực tế của sendPacket() gần nhất
+    int      retryCount_   = 0;
 };
 
 // ============================================================

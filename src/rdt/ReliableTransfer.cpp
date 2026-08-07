@@ -75,24 +75,106 @@ bool RDTSender::sendFile(const std::string& filePath)
 }
 
 // ---- Stop-and-Wait backward-compat ----
-// Gửi đúng 1 gói với window=1 và không congestion control phức tạp.
+// Gửi đúng 1 gói, chờ ACK với vòng lặp timeout + retransmit.
+// Thử tối đa (1 + maxRetries_) lần trước khi báo lỗi hẳn.
 bool RDTSender::sendPacket(const uint8_t* data, size_t len)
 {
-    // Tạo sender với window=1, ssthresh=64 (thực tế không reach được)
-    RDTWindowSender ws(socket_, destIP_, destPort_);
-    ws.setMSS(len > 0 ? len : 1);         // 1 segment = toàn bộ payload
-    ws.setTimeoutMs(timeoutMs_);
-    ws.setMaxRetransmitRounds(maxRetries_);
-    ws.setInitialCwnd(1.0);
-    ws.setInitialSsthresh(64.0);
-    ws.setMaxWindowSegments(1);            // Stop-and-Wait: window = 1
+    // Reset thống kê của lần gọi này
+    retryCount_ = 0;
 
-    bool ok = ws.sendData(data, len);
+    // ---- Xây packet (header + payload) ----
+    CustomUDPHeader hdr{};
+    hdr.seqNum     = 0;          // Stop-and-Wait dùng seq cố định = 0
+    hdr.ackNum     = 0;
+    hdr.payloadLen = static_cast<uint16_t>(len);
+    hdr.windowSize = 1;
+    setFlag(hdr, FLAG_DATA);
+    hdr.checksum   = calculateChecksum(hdr, data, len);
 
-    lastCwnd_     = ws.getFinalCwnd();
-    lastTimeouts_ = ws.getTotalTimeouts();
-    lastSegsSent_ = ws.getTotalPacketsSent();
-    return ok;
+    // Buffer = header + payload
+    std::vector<uint8_t> pkt(CUSTOM_UDP_HEADER_SIZE + len);
+    serializeHeader(hdr, pkt.data());
+    if (len > 0)
+        std::memcpy(pkt.data() + CUSTOM_UDP_HEADER_SIZE, data, len);
+
+    constexpr size_t ACK_BUF_SZ = CUSTOM_UDP_HEADER_SIZE + 64;
+    uint8_t ackBuf[ACK_BUF_SZ];
+
+    // ---- Vòng lặp gửi + chờ ACK (tối đa 1 + maxRetries_ lần) ----
+    for (int attempt = 0; attempt <= maxRetries_; ++attempt)
+    {
+        if (attempt == 0)
+            printf("[RDT-SENDER] sendPacket: gui goi seq=0, len=%zu\n", len);
+        else
+            printf("[RDT-SENDER] sendPacket: retransmit lan %d/%d (seq=0)\n",
+                   attempt, maxRetries_);
+
+        // Gửi packet
+        int sent = socket_.sendTo(pkt.data(), pkt.size(), destIP_, destPort_);
+        if (sent < 0)
+        {
+            fprintf(stderr, "[RDT-SENDER] sendPacket: sendTo that bai (attempt=%d)\n",
+                    attempt);
+            // Không break ngay, thử lại lần sau
+            retryCount_ = attempt;
+            continue;
+        }
+
+        // Đặt timeout và chờ ACK
+        socket_.setRecvTimeout(timeoutMs_);
+
+        std::string fromIP;
+        uint16_t    fromPort = 0;
+        int received = socket_.recvFrom(ackBuf, ACK_BUF_SZ, fromIP, fromPort);
+
+        if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE))
+        {
+            // Timeout hoặc gói quá nhỏ → retry
+            printf("[RDT-SENDER] sendPacket: timeout hoac goi ACK qua nho"
+                   " (attempt=%d)\n", attempt);
+            retryCount_ = attempt + 1;   // đã cần ít nhất (attempt+1) lần retry
+            continue;
+        }
+
+        CustomUDPHeader ackHdr = deserializeHeader(ackBuf);
+
+        // Kiểm tra ACK hợp lệ: flag ACK, ackNum đúng, checksum đúng
+        if (!hasFlag(ackHdr, FLAG_ACK))
+        {
+            printf("[RDT-SENDER] sendPacket: nhan duoc goi khong phai ACK"
+                   " (attempt=%d)\n", attempt);
+            retryCount_ = attempt + 1;
+            continue;
+        }
+        if (ackHdr.ackNum != hdr.seqNum)
+        {
+            printf("[RDT-SENDER] sendPacket: ACK sai seq (nhan=%u, mong=%u)"
+                   " (attempt=%d)\n", ackHdr.ackNum, hdr.seqNum, attempt);
+            retryCount_ = attempt + 1;
+            continue;
+        }
+        if (!verifyChecksum(ackHdr, ackBuf + CUSTOM_UDP_HEADER_SIZE,
+                            static_cast<size_t>(received) - CUSTOM_UDP_HEADER_SIZE))
+        {
+            printf("[RDT-SENDER] sendPacket: ACK checksum SAI (attempt=%d)\n",
+                   attempt);
+            retryCount_ = attempt + 1;
+            continue;
+        }
+
+        // ---- ACK hợp lệ ----
+        printf("[RDT-SENDER] sendPacket: nhan ACK hop le (attempt=%d,"
+               " retries=%d)\n", attempt, retryCount_);
+        lastSegsSent_ = 1;
+        return true;
+    }
+
+    // Hết số lần retry
+    fprintf(stderr,
+            "[RDT-SENDER] sendPacket: THAT BAI sau %d lan thu (maxRetries=%d)\n",
+            retryCount_, maxRetries_);
+    lastSegsSent_ = 1;
+    return false;
 }
 
 // ============================================================
