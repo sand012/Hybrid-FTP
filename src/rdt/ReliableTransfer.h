@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 // ============================================================
 //  Hằng dùng chung (backward-compat với code cũ)
@@ -41,6 +42,9 @@ public:
     void setInitialCwnd(double c)            { initCwnd_    = c;           }
     void setInitialSsthresh(double s)        { initSsthresh_= s;           }
     void setMaxWindowSegments(uint32_t w)    { maxWinSegs_  = w;           }
+    void setCancellationCallback(std::function<bool()> callback) {
+        shouldCancel_ = std::move(callback);
+    }
 
 
     // ---- Thống kê sau lần gửi ----
@@ -73,6 +77,7 @@ private:
     uint32_t lastSegsSent_ = 0;
     // Số lần retransmit thực tế của sendPacket() gần nhất
     int      retryCount_   = 0;
+    std::function<bool()> shouldCancel_;
 };
 
 // ============================================================
@@ -100,6 +105,9 @@ public:
     // ---- Tuỳ chỉnh ----
     void setTimeoutMs(int ms)          { timeoutMs_     = ms; }
     void setAdvertisedWindow(uint16_t w){ advWindow_    = w;  }
+    void setCancellationCallback(std::function<bool()> callback) {
+        shouldCancel_ = std::move(callback);
+    }
 
 private:
     UDPSocket&  socket_;
@@ -109,6 +117,7 @@ private:
     // State cho receivePacket Stop-and-Wait backward-compat
     uint32_t    expectedSeq_  = 0;
     uint32_t    lastAckSent_  = UINT32_MAX;
+    std::function<bool()> shouldCancel_;
 
     void sendRawAck(uint32_t ackNum, uint16_t windowSize,
                     const std::string& ip, uint16_t port);

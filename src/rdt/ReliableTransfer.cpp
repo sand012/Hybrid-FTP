@@ -32,6 +32,7 @@ bool RDTSender::runWindowSender(const uint8_t* data, size_t len)
     ws.setInitialCwnd(initCwnd_);
     ws.setInitialSsthresh(initSsthresh_);
     ws.setMaxWindowSegments(maxWinSegs_);
+    ws.setCancellationCallback(shouldCancel_);
 
     bool ok = ws.sendData(data, len);
 
@@ -205,6 +206,7 @@ void RDTReceiver::sendRawAck(uint32_t ackNum, uint16_t windowSize,
 bool RDTReceiver::receiveBuffer(std::vector<uint8_t>& outBuffer)
 {
     RDTWindowReceiver wr(socket_, advWindow_);
+    wr.setCancellationCallback(shouldCancel_);
     socket_.setRecvTimeout(timeoutMs_);
 
     std::string senderIP;

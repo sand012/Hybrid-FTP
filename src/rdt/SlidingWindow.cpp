@@ -119,6 +119,10 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
 
     while (base < N)
     {
+        if (shouldCancel_ && shouldCancel_()) {
+            printf("[SW-SENDER] Transfer bi huy bo boi ABOR.\n");
+            return false;
+        }
         uint32_t wnd = computeEffectiveWindow();
 
         // ---- Gửi các segment trong cửa sổ ----
@@ -145,6 +149,11 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
         std::string fromIP;
         uint16_t fromPort;
         int received = socket_.recvFrom(recvBuf, sizeof(recvBuf), fromIP, fromPort);
+
+        if (shouldCancel_ && shouldCancel_()) {
+            printf("[SW-SENDER] Transfer bi huy boi ABOR khi cho ACK.\n");
+            return false;
+        }
 
         if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE))
         {
@@ -238,6 +247,8 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
     socket_.setRecvTimeout(timeoutMs_);
     for (int attempt = 0; attempt < maxRetransmitRounds_; ++attempt)
     {
+        if (shouldCancel_ && shouldCancel_())
+            return false;
         sendFIN(socket_, destIP_, destPort_,
                 N, static_cast<uint16_t>(computeEffectiveWindow()));
         printf("[SW-SENDER] Gui FIN (lan %d)\n", attempt + 1);
@@ -308,7 +319,16 @@ bool RDTWindowReceiver::receiveData(std::vector<uint8_t>& outData,
 
     while (true)
     {
+        if (shouldCancel_ && shouldCancel_()) {
+            printf("[SW-RECEIVER] Transfer bi huy boi ABOR.\n");
+            return false;
+        }
         int received = socket_.recvFrom(recvBuf, sizeof(recvBuf), senderIP, senderPort);
+
+        if (shouldCancel_ && shouldCancel_()) {
+            printf("[SW-RECEIVER] Transfer bi huy boi ABOR khi cho data.\n");
+            return false;
+        }
 
         if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE))
         {

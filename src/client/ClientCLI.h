@@ -55,9 +55,11 @@ private:
   // Parse passive mode response "227 ... (h1,h2,h3,h4,p1,p2)" → trả về port
   // Cũng set serverIP_ từ reply.
   uint16_t parsePasvReply(const std::string &reply, std::string &outIP) const;
+  bool sendAbortWithoutWaiting();
 
   CommandSender m_sendCommand;
   int m_controlSock;                  // TCP fd — dùng để lấy server IP
   std::string m_serverHost;           // IP server (lấy từ socket hoặc argv)
   std::atomic<bool> m_aborted{false}; // set true khi nhận SIGINT/SIGTERM
+  std::atomic<bool> m_abortCommandSent{false};
 };

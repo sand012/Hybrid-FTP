@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 // ============================================================
 //  RDTWindowSender / RDTWindowReceiver   (Giai đoạn 3 - Dev2)
@@ -50,6 +51,9 @@ public:
     void setMaxWindowSegments(uint32_t w) { maxWindowSegments_ = w; }
     void setTimeoutMs(int ms) { timeoutMs_ = ms; }
     void setMaxRetransmitRounds(int r) { maxRetransmitRounds_ = r; }
+    void setCancellationCallback(std::function<bool()> callback) {
+        shouldCancel_ = std::move(callback);
+    }
 
     // ---- Thống kê sau khi sendData() chạy xong (phục vụ debug/demo) ----
     double getFinalCwnd() const { return cwnd_; }
@@ -76,6 +80,7 @@ private:
     uint32_t recvWindow_ = 1; // cửa sổ receiver quảng bá gần nhất (flow control)
     int totalTimeouts_ = 0;
     uint32_t totalPacketsSent_ = 0;
+    std::function<bool()> shouldCancel_;
 };
 
 class RDTWindowReceiver
@@ -94,6 +99,9 @@ public:
                      std::string &senderIP, uint16_t &senderPort);
 
     void setAdvertisedWindow(uint16_t w) { advertisedWindow_ = w; }
+    void setCancellationCallback(std::function<bool()> callback) {
+        shouldCancel_ = std::move(callback);
+    }
 
 private:
     void sendCumulativeAck(const std::string &ip, uint16_t port);
@@ -101,4 +109,5 @@ private:
     UDPSocket &socket_;
     uint16_t advertisedWindow_;
     uint32_t expectedSeq_ = 0; // seq kế tiếp đang mong đợi (tăng dần theo từng segment, bắt đầu từ 0)
+    std::function<bool()> shouldCancel_;
 };

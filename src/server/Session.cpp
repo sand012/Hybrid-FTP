@@ -109,6 +109,38 @@ static bool send_reply(int fd, const std::string &reply) {
   return send_all(fd, reply.c_str(), reply.size());
 }
 
+// Kiểm tra ABOR trên control channel mà không chặn vòng truyền UDP. Chỉ lấy
+// dữ liệu khỏi TCP socket khi đã có trọn một dòng ABOR; các lệnh khác được giữ
+// lại để vòng lặp session xử lý sau khi transfer kết thúc.
+static bool consume_pending_abor(int fd) {
+  char peekBuffer[512];
+  const ssize_t count =
+      recv(fd, peekBuffer, sizeof(peekBuffer) - 1, MSG_PEEK | MSG_DONTWAIT);
+  if (count <= 0) {
+    return false;
+  }
+
+  peekBuffer[count] = '\0';
+  const char *newline = static_cast<const char *>(
+      std::memchr(peekBuffer, '\n', static_cast<std::size_t>(count)));
+  if (newline == nullptr) {
+    return false;
+  }
+
+  std::string line(peekBuffer,
+                   static_cast<std::size_t>(newline - peekBuffer));
+  if (!line.empty() && line.back() == '\r') {
+    line.pop_back();
+  }
+  const ParsedCommand command = CommandParser::parse(line);
+  if (!command.valid || command.name != "ABOR" || !command.argument.empty()) {
+    return false;
+  }
+
+  char consumed[512];
+  return read_line(fd, consumed, sizeof(consumed)) >= 0;
+}
+
 static std::string get_socket_ip(int fd) {
   sockaddr_in addr{};
   socklen_t len = sizeof(addr);
@@ -877,6 +909,13 @@ static bool handle_command(int fd, const std::string &line,
   // RETR — Server gửi file đến client qua RDT data channel
   // ============================================================
   if (command.name == "RETR") {
+    bool transferAborted = false;
+    auto cancellationCheck = [&]() {
+      if (!transferAborted && consume_pending_abor(fd)) {
+        transferAborted = true;
+      }
+      return transferAborted;
+    };
     if (command.argument.empty()) {
       send_reply(fd, "501 Missing filename.\r\n");
       return false;
@@ -918,6 +957,7 @@ static bool handle_command(int fd, const std::string &line,
     if (session.dataMode == DataMode::ACTIVE && !peerIP.empty() &&
         peerPort != 0) {
       RDTSender sender(*dataSocket, peerIP, peerPort);
+      sender.setCancellationCallback(cancellationCheck);
       bool ok = sender.sendFile(resolvedStr);
 
       if (ownsSocket) {
@@ -925,7 +965,10 @@ static bool handle_command(int fd, const std::string &line,
         delete dataSocket;
       }
 
-      if (ok) {
+      if (transferAborted) {
+        send_reply(fd, "426 Connection closed; transfer aborted.\r\n");
+        send_reply(fd, "226 Abort successful.\r\n");
+      } else if (ok) {
         // Log hash
         const std::string hash = CryptoHash::computeSHA256FromFile(resolvedStr);
         std::printf("[Session] SHA-256 sau khi RETR: %s\n", hash.c_str());
@@ -960,13 +1003,17 @@ static bool handle_command(int fd, const std::string &line,
         peerPort = fromPort;
       }
       RDTSender sender(*dataSocket, peerIP, peerPort);
+      sender.setCancellationCallback(cancellationCheck);
       bool ok = sender.sendFile(resolvedStr);
 
       // Reset passive socket for re-use
       session.passiveSocket.reset();
       session.dataMode = DataMode::NONE;
 
-      if (ok) {
+      if (transferAborted) {
+        send_reply(fd, "426 Connection closed; transfer aborted.\r\n");
+        send_reply(fd, "226 Abort successful.\r\n");
+      } else if (ok) {
         const std::string hash = CryptoHash::computeSHA256FromFile(resolvedStr);
         std::printf("[Session] SHA-256 sau khi RETR: %s\n", hash.c_str());
         send_reply(fd, "226 Transfer complete.\r\n");
@@ -1017,7 +1064,16 @@ static bool handle_command(int fd, const std::string &line,
                 appendMode ? 1 : 0);
 
     RDTReceiver receiver(*dataSocket);
-    receiver.setTimeoutMs(15000);
+    // Timeout ngắn giúp vòng nhận kiểm tra ABOR nhanh mà không tạo thread đọc
+    // control socket song song.
+    receiver.setTimeoutMs(250);
+    bool transferAborted = false;
+    receiver.setCancellationCallback([&]() {
+      if (!transferAborted && consume_pending_abor(fd)) {
+        transferAborted = true;
+      }
+      return transferAborted;
+    });
 
     if (session.dataMode == DataMode::ACTIVE) {
       // Active: receive into buffer then write
@@ -1029,6 +1085,8 @@ static bool handle_command(int fd, const std::string &line,
       }
       if (!ok) {
         send_reply(fd, "426 Connection closed; transfer aborted.\r\n");
+        if (transferAborted)
+          send_reply(fd, "226 Abort successful.\r\n");
         return false;
       }
       bool wrote = false;
@@ -1053,6 +1111,8 @@ static bool handle_command(int fd, const std::string &line,
       session.dataMode = DataMode::NONE;
       if (!ok) {
         send_reply(fd, "426 Connection closed; transfer aborted.\r\n");
+        if (transferAborted)
+          send_reply(fd, "226 Abort successful.\r\n");
         return false;
       }
       bool wrote = false;
@@ -1152,7 +1212,7 @@ static bool handle_command(int fd, const std::string &line,
   }
 
   // ============================================================
-  // ABOR — Abort current transfer (best-effort, no real abort flag here)
+  // ABOR khi không có transfer đang chạy: reset data channel an toàn.
   // ============================================================
   if (command.name == "ABOR") {
     // Clean up any open data channel state

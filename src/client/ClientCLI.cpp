@@ -59,6 +59,26 @@ static std::string recvControlReply(int fd)
     return reply;
 }
 
+bool ClientCLI::sendAbortWithoutWaiting()
+{
+    if (m_abortCommandSent.exchange(true))
+        return true;
+
+    static constexpr char command[] = "ABOR\r\n";
+    std::size_t sent = 0;
+    while (sent < sizeof(command) - 1)
+    {
+        const ssize_t n = send(m_controlSock, command + sent,
+                               sizeof(command) - 1 - sent, 0);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return false;
+        sent += static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
 // ============================================================
 // Constructor
 // ============================================================
@@ -235,7 +255,13 @@ std::string ClientCLI::handleRetr(
     // 5. Nhận dữ liệu bằng RDT
     // ========================================================
     RDTReceiver receiver(udp);
-    receiver.setTimeoutMs(15000);
+    receiver.setTimeoutMs(250);
+    receiver.setCancellationCallback([this]() {
+        if (!m_aborted.load())
+            return false;
+        sendAbortWithoutWaiting();
+        return true;
+    });
 
     std::vector<uint8_t> buffer;
 
@@ -244,6 +270,12 @@ std::string ClientCLI::handleRetr(
 
     if (!ok)
     {
+        if (m_abortCommandSent.load())
+        {
+            const std::string aborted = recvControlReply(m_controlSock);
+            const std::string completed = recvControlReply(m_controlSock);
+            return retrReply + "\n" + aborted + "\n" + completed;
+        }
         return retrReply +
                "\nError: RDT receive failed";
     }
@@ -466,6 +498,12 @@ std::string ClientCLI::handleStor(
         udp,
         serverIP,
         pasvPort);
+    sender.setCancellationCallback([this]() {
+        if (!m_aborted.load())
+            return false;
+        sendAbortWithoutWaiting();
+        return true;
+    });
 
     bool ok =
         sender.sendBuffer(
@@ -476,6 +514,12 @@ std::string ClientCLI::handleStor(
 
     if (!ok)
     {
+        if (m_abortCommandSent.load())
+        {
+            const std::string aborted = recvControlReply(m_controlSock);
+            const std::string completed = recvControlReply(m_controlSock);
+            return openingReply + "\n" + aborted + "\n" + completed;
+        }
         return "Error: RDT send failed (cwnd=" +
                std::to_string(
                    static_cast<int>(
@@ -616,7 +660,13 @@ std::string ClientCLI::handleList(
     // 6. Nhận directory data bằng Reliable UDP
     // ========================================================
     RDTReceiver receiver(udp);
-    receiver.setTimeoutMs(15000);
+    receiver.setTimeoutMs(250);
+    receiver.setCancellationCallback([this]() {
+        if (!m_aborted.load())
+            return false;
+        sendAbortWithoutWaiting();
+        return true;
+    });
 
     std::vector<uint8_t> buffer;
 
@@ -625,6 +675,12 @@ std::string ClientCLI::handleList(
 
     if (!ok)
     {
+        if (m_abortCommandSent.load())
+        {
+            const std::string aborted = recvControlReply(m_controlSock);
+            const std::string completed = recvControlReply(m_controlSock);
+            return openingReply + "\n" + aborted + "\n" + completed;
+        }
         return openingReply +
                "\nError: Directory transfer failed.";
     }
@@ -694,7 +750,8 @@ void ClientCLI::run()
                 << "\n[CLIENT] Nhan tin hieu ngat. "
                 << "Dang gui ABOR...\n";
 
-            m_sendCommand("ABOR");
+            if (!m_abortCommandSent.load())
+                m_sendCommand("ABOR");
 
             std::cout
                 << "[CLIENT] Dang gui QUIT...\n";
