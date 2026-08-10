@@ -299,7 +299,7 @@ Khi nhận gói sai thứ tự (`seqNum != expectedSeq_`):
 ```table
 Sender (cwnd=3)                                    Receiver
      │                                                 │
-     │──── DATA(seq=0, payloadLen=1024) ─────────────►│
+     │──── DATA(seq=0, payloadLen=1024) ─────────────►│  
      │──── DATA(seq=1, payloadLen=1024) ─────────────►│
      │──── DATA(seq=2, payloadLen=1024) ─────────────►│
      │                                                 │ Nhận seq=0 OK → ACK(0, win=8)
