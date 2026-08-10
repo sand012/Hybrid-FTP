@@ -19,7 +19,7 @@ Tổng kích thước: **15 byte** (= `CUSTOM_UDP_HEADER_SIZE`)
 ```
  Byte Offset  Kích thước   Tên trường      Kiểu C++
 ─────────────┼──────────────┼────────────────┼─────────────
-     0 - 3       4 byte      seqNum           uint32_t
+     0 - 3       4 byte      seqNum           uint32_t 
      4 - 7       4 byte      ackNum           uint32_t
      8 - 9       2 byte      payloadLen       uint16_t
     10 - 11      2 byte      windowSize       uint16_t
