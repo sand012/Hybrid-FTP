@@ -280,6 +280,15 @@ std::string ClientCLI::handleRetr(
                "\nError: RDT receive failed";
     }
 
+    std::vector<uint8_t> decoded;
+    std::string codecError;
+    if (!TransferModeCodec::decode(buffer, m_transferMode, m_transferType,
+                                   decoded, &codecError))
+    {
+        return retrReply + "\nError: MODE decode failed: " + codecError;
+    }
+    buffer = std::move(decoded);
+
     // ========================================================
     // 6. Ghi file local
     // ========================================================
@@ -505,10 +514,9 @@ std::string ClientCLI::handleStor(
         return true;
     });
 
-    bool ok =
-        sender.sendBuffer(
-            fileBuffer.data(),
-            fileBuffer.size());
+    const std::vector<uint8_t> encoded =
+        TransferModeCodec::encode(fileBuffer, m_transferMode);
+    bool ok = sender.sendBuffer(encoded.data(), encoded.size());
 
     udp.close();
 
@@ -684,6 +692,15 @@ std::string ClientCLI::handleList(
         return openingReply +
                "\nError: Directory transfer failed.";
     }
+
+    std::vector<uint8_t> decoded;
+    std::string codecError;
+    if (!TransferModeCodec::decode(buffer, m_transferMode, m_transferType,
+                                   decoded, &codecError))
+    {
+        return openingReply + "\nError: MODE decode failed: " + codecError;
+    }
+    buffer = std::move(decoded);
 
     // ========================================================
     // 7. Convert buffer thành string
@@ -980,6 +997,33 @@ void ClientCLI::run()
         // ====================================================
         std::string reply =
             m_sendCommand(line);
+
+        // Change local state only after the server accepted the command, so
+        // both sides always apply the same data-channel representation.
+        if (reply.rfind("200", 0) == 0)
+        {
+            std::istringstream stateCommand(line);
+            std::string name;
+            std::string argument;
+            stateCommand >> name >> argument;
+            for (char &ch : name)
+                ch = static_cast<char>(std::toupper(
+                    static_cast<unsigned char>(ch)));
+            for (char &ch : argument)
+                ch = static_cast<char>(std::toupper(
+                    static_cast<unsigned char>(ch)));
+
+            if (name == "MODE" && argument == "S")
+                m_transferMode = TransferMode::Stream;
+            else if (name == "MODE" && argument == "B")
+                m_transferMode = TransferMode::Block;
+            else if (name == "MODE" && argument == "C")
+                m_transferMode = TransferMode::Compressed;
+            else if (name == "TYPE" && argument == "A")
+                m_transferType = TransferType::ASCII;
+            else if (name == "TYPE" && argument == "I")
+                m_transferType = TransferType::Binary;
+        }
 
         std::cout
             << reply

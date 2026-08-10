@@ -5,6 +5,8 @@
 #include <functional>
 #include <string>
 
+#include "../common/TransferModeCodec.h"
+
 /**
  * ClientCLI — giao diện dòng lệnh FTP client.
  *
@@ -62,4 +64,6 @@ private:
   std::string m_serverHost;           // IP server (lấy từ socket hoặc argv)
   std::atomic<bool> m_aborted{false}; // set true khi nhận SIGINT/SIGTERM
   std::atomic<bool> m_abortCommandSent{false};
+  TransferType m_transferType{TransferType::ASCII};
+  TransferMode m_transferMode{TransferMode::Stream};
 };

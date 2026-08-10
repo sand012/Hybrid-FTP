@@ -203,6 +203,7 @@ ftp> PASS any_password
 | **`SIZE`** | Xem kích thước tập tin trên server | TCP Control | `SIZE myfile.bin` |
 | **`MDTM`** | Xem thời gian chỉnh sửa cuối cùng của tập tin | TCP Control | `MDTM myfile.bin` |
 | **`TYPE`** | Chọn chế độ truyền tải (`A` - ASCII, `I` - Binary) | TCP Control | `TYPE I` |
+| **`MODE`** | Chọn cách biểu diễn data (`S` - Stream, `B` - Block, `C` - Compressed/RLE) | TCP Control | `MODE B` |
 | **`HASH`** | Tính và trả về mã SHA-256 của file trên server | TCP Control | `HASH myfile.bin` |
 | **`LIST`** | Hiển thị danh sách tệp/thư mục chi tiết | UDP (RDT) | `LIST` hoặc `LIST subfolder` |
 | **`NLST`** | Hiển thị danh sách tên tệp/thư mục rút gọn | UDP (RDT) | `NLST` |

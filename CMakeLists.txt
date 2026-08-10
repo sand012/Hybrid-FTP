@@ -18,6 +18,7 @@ add_library(HybridFTP_Core
     src/common/CommandParser.cpp
     src/common/CryptoHash.cpp
     src/common/FileHandler.cpp
+    src/common/TransferModeCodec.cpp
     
 )
 target_include_directories(HybridFTP_Core PUBLIC
@@ -83,5 +84,10 @@ if(BUILD_TESTING)
     )
     target_include_directories(path_manager_listing_test PRIVATE src/common)
     add_test(NAME path_manager_listing_test COMMAND path_manager_listing_test)
-endif()
 
+    add_executable(transfer_mode_codec_test
+        tests/TransferModeCodecTest.cpp
+    )
+    target_link_libraries(transfer_mode_codec_test PRIVATE HybridFTP_Core)
+    add_test(NAME transfer_mode_codec_test COMMAND transfer_mode_codec_test)
+endif()

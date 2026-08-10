@@ -187,7 +187,7 @@ static bool handle_help_command(int fd, const std::string &argument) {
       {"RNFR", "RNFR <oldname>"},
       {"RNTO", "RNTO <newname>"},
       {"TYPE", "TYPE {A | I}"},
-      {"MODE", "MODE S"},
+      {"MODE", "MODE {S | B | C}"},
       {"PORT", "PORT <h1,h2,h3,h4,p1,p2>"},
       {"PASV", "PASV"},
       {"RETR", "RETR <filename>"},
@@ -353,17 +353,24 @@ static bool handle_command(int fd, const std::string &line,
     send_reply(fd, "501 TYPE requires A or I.\r\n");
     return false;
   }
-  // Check Mode Stream
+  // Select the FTP data representation used above the reliable UDP layer.
   if (command.name == "MODE") {
     if (command.argument == "S" || command.argument == "s") {
-
       session.transferMode = TransferMode::Stream;
-
       send_reply(fd, "200 Mode set to S (Stream).\r\n");
       return false;
     }
-
-    send_reply(fd, "501 MODE only supports stream mode\r\n");
+    if (command.argument == "B" || command.argument == "b") {
+      session.transferMode = TransferMode::Block;
+      send_reply(fd, "200 Mode set to B (Block).\r\n");
+      return false;
+    }
+    if (command.argument == "C" || command.argument == "c") {
+      session.transferMode = TransferMode::Compressed;
+      send_reply(fd, "200 Mode set to C (Compressed).\r\n");
+      return false;
+    }
+    send_reply(fd, "501 MODE requires S, B, or C.\r\n");
     return false;
   }
   // PORT
@@ -550,6 +557,9 @@ static bool handle_command(int fd, const std::string &line,
     }
   };
   auto sendBufferOverDataChannel = [&](const std::string &data) -> bool {
+    const std::vector<uint8_t> raw(data.begin(), data.end());
+    const std::vector<uint8_t> encoded =
+        TransferModeCodec::encode(raw, session.transferMode);
     UDPSocket *dataSocket = nullptr;
     std::string peerIP;
     uint16_t peerPort = 0;
@@ -568,7 +578,7 @@ static bool handle_command(int fd, const std::string &line,
       RDTSender sender(*dataSocket, peerIP, peerPort);
 
       const bool ok = sender.sendBuffer(
-          reinterpret_cast<const uint8_t *>(data.data()), data.size());
+          encoded.data(), encoded.size());
 
       if (ownsSocket) {
         dataSocket->close();
@@ -610,7 +620,7 @@ static bool handle_command(int fd, const std::string &line,
       RDTSender sender(*dataSocket, peerIP, peerPort);
 
       const bool ok = sender.sendBuffer(
-          reinterpret_cast<const uint8_t *>(data.data()), data.size());
+          encoded.data(), encoded.size());
 
       /*
        * PASV socket chỉ dùng cho một transfer.
@@ -625,6 +635,9 @@ static bool handle_command(int fd, const std::string &line,
     return false;
   };
   auto sendTextOverDataChannel = [&](const std::string &text) -> bool {
+    const std::vector<uint8_t> raw(text.begin(), text.end());
+    const std::vector<uint8_t> encoded =
+        TransferModeCodec::encode(raw, session.transferMode);
     UDPSocket *dataSocket = nullptr;
     std::string peerIP;
     uint16_t peerPort = 0;
@@ -642,7 +655,7 @@ static bool handle_command(int fd, const std::string &line,
       RDTSender sender(*dataSocket, peerIP, peerPort);
 
       bool ok = sender.sendBuffer(
-          reinterpret_cast<const uint8_t *>(text.data()), text.size());
+          encoded.data(), encoded.size());
 
       if (ownsSocket) {
         dataSocket->close();
@@ -685,7 +698,7 @@ static bool handle_command(int fd, const std::string &line,
       RDTSender sender(*dataSocket, peerIP, peerPort);
 
       bool ok = sender.sendBuffer(
-          reinterpret_cast<const uint8_t *>(text.data()), text.size());
+          encoded.data(), encoded.size());
 
       session.passiveSocket.reset();
       session.dataMode = DataMode::NONE;
@@ -774,7 +787,13 @@ static bool handle_command(int fd, const std::string &line,
                          std::string(session.transferType == TransferType::ASCII
                                          ? "ASCII"
                                          : "Binary") +
-                         "\r\n MODE: Stream\r\n"
+                         "\r\n MODE: " +
+                         std::string(session.transferMode == TransferMode::Stream
+                                         ? "Stream"
+                                         : session.transferMode == TransferMode::Block
+                                               ? "Block"
+                                               : "Compressed") +
+                         "\r\n"
                          "211 End of status.\r\n");
       return false;
     }
@@ -956,9 +975,20 @@ static bool handle_command(int fd, const std::string &line,
     // Set peer for ACTIVE mode (PASSIVE learns peer from first receive)
     if (session.dataMode == DataMode::ACTIVE && !peerIP.empty() &&
         peerPort != 0) {
+      std::vector<char> fileData;
+      if (!FileHandler::readBinaryFile(resolvedStr, fileData)) {
+        if (ownsSocket) {
+          dataSocket->close();
+          delete dataSocket;
+        }
+        send_reply(fd, "451 Cannot read file.\r\n");
+        return false;
+      }
+      const std::vector<uint8_t> raw(fileData.begin(), fileData.end());
+      const auto encoded = TransferModeCodec::encode(raw, session.transferMode);
       RDTSender sender(*dataSocket, peerIP, peerPort);
       sender.setCancellationCallback(cancellationCheck);
-      bool ok = sender.sendFile(resolvedStr);
+      bool ok = sender.sendBuffer(encoded.data(), encoded.size());
 
       if (ownsSocket) {
         dataSocket->close();
@@ -1002,9 +1032,18 @@ static bool handle_command(int fd, const std::string &line,
         peerIP = fromIP;
         peerPort = fromPort;
       }
+      std::vector<char> fileData;
+      if (!FileHandler::readBinaryFile(resolvedStr, fileData)) {
+        session.passiveSocket.reset();
+        session.dataMode = DataMode::NONE;
+        send_reply(fd, "451 Cannot read file.\r\n");
+        return false;
+      }
+      const std::vector<uint8_t> raw(fileData.begin(), fileData.end());
+      const auto encoded = TransferModeCodec::encode(raw, session.transferMode);
       RDTSender sender(*dataSocket, peerIP, peerPort);
       sender.setCancellationCallback(cancellationCheck);
-      bool ok = sender.sendFile(resolvedStr);
+      bool ok = sender.sendBuffer(encoded.data(), encoded.size());
 
       // Reset passive socket for re-use
       session.passiveSocket.reset();
@@ -1089,6 +1128,17 @@ static bool handle_command(int fd, const std::string &line,
           send_reply(fd, "226 Abort successful.\r\n");
         return false;
       }
+      std::vector<uint8_t> decoded;
+      std::string codecError;
+      if (!TransferModeCodec::decode(buf, session.transferMode,
+                                     session.transferType, decoded,
+                                     &codecError)) {
+        std::fprintf(stderr, "[Session] MODE decode failed: %s\n",
+                     codecError.c_str());
+        send_reply(fd, "551 Invalid transfer mode encoding.\r\n");
+        return false;
+      }
+      buf = std::move(decoded);
       bool wrote = false;
       if (session.transferType == TransferType::Binary) {
         wrote = FileHandler::writeBinaryFile(
@@ -1115,6 +1165,17 @@ static bool handle_command(int fd, const std::string &line,
           send_reply(fd, "226 Abort successful.\r\n");
         return false;
       }
+      std::vector<uint8_t> decoded;
+      std::string codecError;
+      if (!TransferModeCodec::decode(buf, session.transferMode,
+                                     session.transferType, decoded,
+                                     &codecError)) {
+        std::fprintf(stderr, "[Session] MODE decode failed: %s\n",
+                     codecError.c_str());
+        send_reply(fd, "551 Invalid transfer mode encoding.\r\n");
+        return false;
+      }
+      buf = std::move(decoded);
       bool wrote = false;
       if (session.transferType == TransferType::Binary) {
         wrote = FileHandler::writeBinaryFile(
