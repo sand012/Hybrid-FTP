@@ -1,10 +1,10 @@
 #pragma once
-#include "UDPSocket.h"
 #include "CustomUDPHeader.h"
-#include <string>
-#include <vector>
+#include "UDPSocket.h"
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <vector>
 
 // ============================================================
 //  RDTWindowSender / RDTWindowReceiver   (Giai đoạn 3 - Dev2)
@@ -34,80 +34,81 @@
 //     Khi timeout, sender gửi lại TOÀN BỘ các gói từ `base` trở đi.
 // ============================================================
 
-class RDTWindowSender
-{
+class RDTWindowSender {
 public:
-    RDTWindowSender(UDPSocket &socket, const std::string &destIP, uint16_t destPort);
+  RDTWindowSender(UDPSocket &socket, const std::string &destIP,
+                  uint16_t destPort);
 
-    // Gửi toàn bộ buffer `data` (độ dài `totalLen`) một cách tin cậy,
-    // dùng sliding window + flow/congestion control.
-    // Trả về true nếu toàn bộ dữ liệu đã được receiver ACK thành công.
-    bool sendData(const uint8_t *data, size_t totalLen);
+  // Gửi toàn bộ buffer `data` (độ dài `totalLen`) một cách tin cậy,
+  // dùng sliding window + flow/congestion control.
+  // Trả về true nếu toàn bộ dữ liệu đã được receiver ACK thành công.
+  bool sendData(const uint8_t *data, size_t totalLen);
 
-    // ---- Cấu hình (đều có giá trị mặc định hợp lý) ----
-    void setMSS(size_t mss) { mss_ = mss; }
-    void setInitialCwnd(double cwnd) { initialCwnd_ = cwnd; }
-    void setInitialSsthresh(double s) { initialSsthresh_ = s; }
-    void setMaxWindowSegments(uint32_t w) { maxWindowSegments_ = w; }
-    void setTimeoutMs(int ms) { timeoutMs_ = ms; }
-    void setMaxRetransmitRounds(int r) { maxRetransmitRounds_ = r; }
-    void setCancellationCallback(std::function<bool()> callback) {
-        shouldCancel_ = std::move(callback);
-    }
+  // ---- Cấu hình (đều có giá trị mặc định hợp lý) ----
+  void setMSS(size_t mss) { mss_ = mss; }
+  void setInitialCwnd(double cwnd) { initialCwnd_ = cwnd; }
+  void setInitialSsthresh(double s) { initialSsthresh_ = s; }
+  void setMaxWindowSegments(uint32_t w) { maxWindowSegments_ = w; }
+  void setTimeoutMs(int ms) { timeoutMs_ = ms; }
+  void setMaxRetransmitRounds(int r) { maxRetransmitRounds_ = r; }
+  void setCancellationCallback(std::function<bool()> callback) {
+    shouldCancel_ = std::move(callback);
+  }
 
-    // ---- Thống kê sau khi sendData() chạy xong (phục vụ debug/demo) ----
-    double getFinalCwnd() const { return cwnd_; }
-    int getTotalTimeouts() const { return totalTimeouts_; }
-    uint32_t getTotalPacketsSent() const { return totalPacketsSent_; }
+  // ---- Thống kê sau khi sendData() chạy xong (phục vụ debug/demo) ----
+  double getFinalCwnd() const { return cwnd_; }
+  int getTotalTimeouts() const { return totalTimeouts_; }
+  uint32_t getTotalPacketsSent() const { return totalPacketsSent_; }
 
 private:
-    uint32_t computeEffectiveWindow() const;
+  uint32_t computeEffectiveWindow() const;
 
-    UDPSocket &socket_;
-    std::string destIP_;
-    uint16_t destPort_;
+  UDPSocket &socket_;
+  std::string destIP_;
+  uint16_t destPort_;
 
-    size_t mss_ = 1024; // Max Segment Size (byte payload / gói)
-    double initialCwnd_ = 1.0;
-    double initialSsthresh_ = 8.0;
-    uint32_t maxWindowSegments_ = 32; // trần cửa sổ (tránh cwnd tăng vô hạn)
-    int timeoutMs_ = 500;
-    int maxRetransmitRounds_ = 16; // tổng số vòng retransmit tối đa trước khi bỏ cuộc
+  size_t mss_ = 1024; // Max Segment Size (byte payload / gói)
+  double initialCwnd_ = 1.0;
+  double initialSsthresh_ = 8.0;
+  uint32_t maxWindowSegments_ = 32; // trần cửa sổ (tránh cwnd tăng vô hạn)
+  int timeoutMs_ = 500;
+  int maxRetransmitRounds_ =
+      16; // tổng số vòng retransmit tối đa trước khi bỏ cuộc
 
-    // Trạng thái runtime (được reset mỗi lần gọi sendData)
-    double cwnd_ = 1.0;
-    double ssthresh_ = 8.0;
-    uint32_t recvWindow_ = 1; // cửa sổ receiver quảng bá gần nhất (flow control)
-    int totalTimeouts_ = 0;
-    uint32_t totalPacketsSent_ = 0;
-    std::function<bool()> shouldCancel_;
+  // Trạng thái runtime (được reset mỗi lần gọi sendData)
+  double cwnd_ = 1.0;
+  double ssthresh_ = 8.0;
+  uint32_t recvWindow_ = 1; // cửa sổ receiver quảng bá gần nhất (flow control)
+  int totalTimeouts_ = 0;
+  uint32_t totalPacketsSent_ = 0;
+  std::function<bool()> shouldCancel_;
 };
 
-class RDTWindowReceiver
-{
+class RDTWindowReceiver {
 public:
-    // advertisedWindow: số lượng segment tối đa receiver sẵn sàng nhận
-    // cùng lúc — dùng cho flow control (gửi ngược lại cho sender qua
-    // header.windowSize trong mỗi ACK).
-    explicit RDTWindowReceiver(UDPSocket &socket, uint16_t advertisedWindow = 8);
+  // advertisedWindow: số lượng segment tối đa receiver sẵn sàng nhận
+  // cùng lúc — dùng cho flow control (gửi ngược lại cho sender qua
+  // header.windowSize trong mỗi ACK).
+  explicit RDTWindowReceiver(UDPSocket &socket, uint16_t advertisedWindow = 8);
 
-    // Nhận dữ liệu cho tới khi gặp gói cuối (FLAG_FIN), ghép lại vào outData.
-    // Hàm block cho tới khi nhận trọn vẹn 1 luồng dữ liệu kết thúc bằng FIN.
-    // Trả về true nếu nhận thành công (luôn true khi thoát bình thường,
-    // vì hàm chỉ return khi đã nhận đủ và đúng thứ tự tới gói FIN).
-    bool receiveData(std::vector<uint8_t> &outData,
-                     std::string &senderIP, uint16_t &senderPort);
+  // Nhận dữ liệu cho tới khi gặp gói cuối (FLAG_FIN), ghép lại vào outData.
+  // Hàm block cho tới khi nhận trọn vẹn 1 luồng dữ liệu kết thúc bằng FIN.
+  // Trả về true nếu nhận thành công (luôn true khi thoát bình thường,
+  // vì hàm chỉ return khi đã nhận đủ và đúng thứ tự tới gói FIN).
+  bool receiveData(std::vector<uint8_t> &outData, std::string &senderIP,
+                   uint16_t &senderPort);
 
-    void setAdvertisedWindow(uint16_t w) { advertisedWindow_ = w; }
-    void setCancellationCallback(std::function<bool()> callback) {
-        shouldCancel_ = std::move(callback);
-    }
+  void setAdvertisedWindow(uint16_t w) { advertisedWindow_ = w; }
+  void setCancellationCallback(std::function<bool()> callback) {
+    shouldCancel_ = std::move(callback);
+  }
 
 private:
-    void sendCumulativeAck(const std::string &ip, uint16_t port);
+  void sendCumulativeAck(const std::string &ip, uint16_t port);
 
-    UDPSocket &socket_;
-    uint16_t advertisedWindow_;
-    uint32_t expectedSeq_ = 0; // seq kế tiếp đang mong đợi (tăng dần theo từng segment, bắt đầu từ 0)
-    std::function<bool()> shouldCancel_;
+  UDPSocket &socket_;
+  uint16_t advertisedWindow_;
+  uint32_t expectedSeq_ =
+      0; // seq kế tiếp đang mong đợi (tăng dần theo từng segment, bắt đầu từ 0)
+  std::function<bool()> shouldCancel_;
 };

@@ -1,9 +1,9 @@
 #pragma once
 #include "../common/PathManager.h"
 #include "../rdt/UDPSocket.h"
+#include <memory>
 #include <optional>
 #include <string>
-#include <memory>
 struct ServerState;
 enum class TransferType { ASCII, Binary };
 

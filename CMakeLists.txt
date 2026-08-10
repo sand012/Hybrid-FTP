@@ -18,7 +18,7 @@ add_library(HybridFTP_Core
     src/common/CommandParser.cpp
     src/common/CryptoHash.cpp
     src/common/FileHandler.cpp
-    src/common/TCPControl.cpp
+    
 )
 target_include_directories(HybridFTP_Core PUBLIC
     src/rdt
@@ -62,18 +62,21 @@ target_link_libraries(rdt_file_client PRIVATE HybridFTP_Core)
 
 
 
-# ============================================================
-#  Dev 3 — End-to-End Integration Test
-# ============================================================
-add_executable(test_e2e_dev3
-    src/client/test_e2e_dev3.cpp
-)
-target_include_directories(test_e2e_dev3 PRIVATE src/rdt src/common)
-target_link_libraries(test_e2e_dev3 PRIVATE HybridFTP_Core OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
-
 include(CTest)
 
 if(BUILD_TESTING)
+    # This developer-only integration test is not present in every checkout.
+    # Only register the target when its source file is available so a normal
+    # configure/build is not prevented by an optional test.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/client/test_e2e_dev3.cpp")
+        add_executable(test_e2e_dev3
+            src/client/test_e2e_dev3.cpp
+        )
+        target_include_directories(test_e2e_dev3 PRIVATE src/rdt src/common)
+        target_link_libraries(test_e2e_dev3 PRIVATE HybridFTP_Core OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+        add_test(NAME test_e2e_dev3 COMMAND test_e2e_dev3)
+    endif()
+
     add_executable(path_manager_listing_test
         tests/PathManagerListingTest.cpp
         src/common/PathManager.cpp
@@ -81,5 +84,4 @@ if(BUILD_TESTING)
     target_include_directories(path_manager_listing_test PRIVATE src/common)
     add_test(NAME path_manager_listing_test COMMAND path_manager_listing_test)
 endif()
-
 
