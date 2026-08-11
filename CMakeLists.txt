@@ -12,7 +12,7 @@ find_package(OpenSSL REQUIRED)
 # ============================================================
 add_library(HybridFTP_Core
     src/rdt/UDPSocket.cpp
-    src/rdt/CustomHeader.cpp
+    src/rdt/CustomUDPHeader.cpp
     src/rdt/SlidingWindow.cpp      # Flow Control + Congestion Control (GBN + Slow Start + AIMD)
     src/rdt/ReliableTransfer.cpp   # Wrapper: RDTSender/RDTReceiver -> RDTWindowSender/Receiver
     src/common/CommandParser.cpp
