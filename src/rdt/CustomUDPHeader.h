@@ -15,11 +15,10 @@ struct CustomUDPHeader
 
 #pragma pack(pop)
 
-//header size 
+// header size
 constexpr size_t CUSTOM_UDP_HEADER_SIZE = sizeof(CustomUDPHeader);
 
-
-//define bit in "flags"
+// define bit in "flags"
 
 enum RDTFlags : uint8_t
 {
@@ -29,9 +28,6 @@ enum RDTFlags : uint8_t
     FLAG_FIN = 1 << 3,
     FLAG_NAK = 1 << 4,
 };
-
-
-
 
 inline void setFlag(CustomUDPHeader &hdr, RDTFlags flag)
 {
