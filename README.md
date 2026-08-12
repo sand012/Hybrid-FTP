@@ -326,14 +326,14 @@ ctest --output-on-failure
 
 ## 📁 Cấu trúc Thư mục Dự án
 
-```
+```structure
 Hybrid-FTP/
 ├── CMakeLists.txt                      # Cấu hình biên dịch chính của CMake
 ├── README.md                           # Tài liệu tổng quan và hướng dẫn sử dụng dự án
 ├── test_rdt.sh                         # Script kiểm thử nghiệm thu tự động RDT
 ├── docs/                               # Tài liệu thiết kế và hình ảnh minh họa
-│   └── image/
-│       └── Section7_AppDemoEvidence/   # Ảnh chụp minh chứng nghiệm thu thực tế
+│   └── Technical Report
+│         
 ├── phanchiacongviec/                   # Bảng phân công nhiệm vụ và checklist tiến độ
 │   ├── Checklist_stage3.md             # Checklist hoàn thành Giai đoạn 3
 │   ├── Checklist_stage4.md             # Kế hoạch báo cáo & diễn tập bảo vệ Giai đoạn 4
