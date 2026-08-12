@@ -131,6 +131,9 @@ Mỗi gói tin dữ liệu hoặc ACK trên kênh UDP đều được đóng gó
 | | `HELP` | TCP | `HELP [command]` | Hiển thị thông tin trợ giúp lệnh |
 | | `STAT` | TCP | `STAT [path]` | Xem trạng thái kết nối / thông tin đường dẫn |
 | | `ABOR` | TCP | `ABOR` | Hủy bỏ tác vụ truyền nhận dữ liệu đang thực thi |
+
+> **Giới hạn hiện tại:** `ABOR` được kiểm tra trong các luồng truyền tệp RDT. Việc hủy `LIST`/`NLST` và giai đoạn chờ kết nối Passive chưa được bảo đảm tức thời; các trường hợp này có thể chờ hết timeout.
+
 | **Cấu hình truyền tải** | `TYPE` | TCP | `TYPE <A\|I>` | Đặt kiểu truyền: ASCII (`A`) hoặc Binary (`I`) |
 | | `MODE` | TCP | `MODE <S\|B\|C>` | Đặt chế độ: Stream (`S`), Block (`B`), Compressed (`C`) |
 | | `PASV` | TCP | `PASV` | Yêu cầu server mở cổng lắng nghe Passive Data Channel |
