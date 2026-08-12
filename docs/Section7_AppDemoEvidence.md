@@ -85,6 +85,7 @@ sha256sum server_storage/sample_binary.bin                        # ghi lại ha
 # 1. Build sạch (cùng commit, cùng bản build)
 rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
+
 # 2. Kết nối tới SERVER MÁY A qua IP LAN (KHÔNG dùng 127.0.0.1)
 ./build/ftp_client 192.168.1.100 2121
 ftp> USER testuser
