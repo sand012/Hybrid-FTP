@@ -1,5 +1,13 @@
 # Hybrid-FTP — TCP Control & UDP RDT Sliding Window
 
+<p align="center">
+  <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg?style=for-the-badge&logo=c%2B%2B" alt="C++23" />
+  <img src="https://img.shields.io/badge/CMake-3.10+-064F8C.svg?style=for-the-badge&logo=cmake" alt="CMake" />
+  <img src="https://img.shields.io/badge/OpenSSL-3.0+-721412.svg?style=for-the-badge&logo=openssl" alt="OpenSSL" />
+  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-FCC624.svg?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
+  <img src="https://img.shields.io/badge/Standard-RFC%20959-success.svg?style=for-the-badge" alt="RFC 959" />
+</p>
+
 > **Đồ án Lập trình Socket — Môn Mạng Máy Tính (Computer Networks)**  
 > **Trường Đại học Khoa học Tự nhiên, ĐHQG-HCM (HCMUS)**
 
@@ -10,7 +18,6 @@
 **Hybrid-FTP** là hệ thống truyền tải tập tin theo mô hình Client - Server lai ghép (Hybrid Architecture):
 
 - **Kênh điều khiển (Control Channel):** Sử dụng giao thức **TCP** tuân thủ đặc tả giao thức FTP (RFC 959) nhằm trao đổi các bản tin điều khiển, xác thực, thiết lập tham số truyền và phản hồi mã trạng thái (1xx, 2xx, 3xx, 4xx, 5xx).
-
 - **Kênh truyền dữ liệu (Data Channel):** Sử dụng giao thức **UDP** kết hợp tầng truyền tải tin cậy tự thiết kế (**Reliable Data Transfer - RDT**) với giải thuật **Sliding Window (Go-Back-N)**, tích hợp cơ chế **Kiểm soát luồng (Flow Control)** và **Kiểm soát tắc nghẽn (Congestion Control: Slow Start + AIMD)**.
 
 Hệ thống cung cấp giao diện dòng lệnh (CLI) trực quan, hỗ trợ đa phiên kết nối đồng thời (Multi-threading), cơ chế bảo mật hộp cát đường dẫn (Path Traversal Protection) và kiểm tra tính toàn vẹn tập tin bằng mã băm **SHA-256**.
@@ -46,7 +53,7 @@ Hệ thống cung cấp giao diện dòng lệnh (CLI) trực quan, hỗ trợ �
 ### 2. Chế độ truyền dữ liệu (Transfer Modes & Types)
 - **Active Mode (`PORT`) & Passive Mode (`PASV`):** Hỗ trợ linh hoạt cả hai cơ chế thỏa thuận cổng truyền tải dữ liệu.
 - **Data Representation (`TYPE`):** 
-  - `TYPE A`: Dạng văn bản (ASCII Mode) có chuẩn hóa ký tự xuống dòng.
+  - `TYPE A`: Dạng văn bản (ASCII Mode) có chuẩn hóa ký tự xuống dòng (`\r\n` $\leftrightarrow$ `\n`).
   - `TYPE I`: Dạng nhị phân nguyên bản (Binary / Image Mode).
 - **Transmission Mode (`MODE`):**
   - `MODE S` (Stream): Truyền luồng byte liên tục.
@@ -79,7 +86,7 @@ Mỗi gói tin dữ liệu hoặc ACK trên kênh UDP đều được đóng gó
 | :--- | :---: | :--- |
 | `seqNum` | 4 bytes | Số thứ tự tuần tự của gói tin (tính theo segment index, bắt đầu từ 0) |
 | `ackNum` | 4 bytes | Số thứ tự gói tin tiếp theo mà bên nhận đang chờ đợi (Cumulative ACK) |
-| `payloadLen` | 2 bytes | Độ dài dữ liệu payload thực tế trong gói tin (tối đa bằng MSS) |
+| `payloadLen` | 2 bytes | Độ dài dữ liệu payload thực tế trong gói tin (tối đa bằng MSS = 1400 bytes) |
 | `windowSize` | 2 bytes | Kích thước cửa sổ nhận còn trống (`rwnd`) dùng cho **Kiểm soát luồng** |
 | `checksum` | 2 bytes | Mã kiểm tra lỗi 16-bit Internet Checksum (tính trên cả Header + Payload) |
 | `flags` | 1 byte | Các cờ điều khiển: `SYN` (0x01), `ACK` (0x02), `DATA` (0x04), `FIN` (0x08), `NAK` (0x10) |
@@ -134,7 +141,7 @@ Mỗi gói tin dữ liệu hoặc ACK trên kênh UDP đều được đóng gó
 | | `MKD` | TCP | `MKD <dir>` | Tạo thư mục mới trên server |
 | | `RMD` | TCP | `RMD <dir>` | Xóa thư mục rỗng trên server |
 | **Thao tác Tệp tin** | `SIZE` | TCP | `SIZE <file>` | Lấy kích thước tệp tin tính theo byte |
-| | `MDTM` | TCP | `MDTM <file>` | Lấy thời gian chỉnh sửa cuối cùng (định dạng YYYYMMDDhhmmss) |
+| | `MDTM` | TCP | `MDTM <file>` | Lấy thời gian chỉnh sửa cuối cùng (định dạng `YYYYMMDDhhmmss`) |
 | | `DELE` | TCP | `DELE <file>` | Xóa tệp tin trên server |
 | | `RNFR` | TCP | `RNFR <file>` | Chỉ định tệp/thư mục nguồn cần đổi tên |
 | | `RNTO` | TCP | `RNTO <file>` | Chỉ định tên đích mới để hoàn tất đổi tên |
@@ -294,19 +301,28 @@ ftp> APPE append_chunk.txt target_file.txt
 
 ## 🧪 Kiểm thử Tự động & Đánh giá Hiệu năng (Benchmarking)
 
-### 1. Chạy toàn bộ Test Suite RDT tự động
-
-Dự án cung cấp kịch bản kiểm thử toàn diện `test_rdt.sh` kiểm tra nhiều kích thước tệp (từ vài chục Byte đến hàng trăm MB) và nhiều kích cỡ cửa sổ Sliding Window:
-
-```bash
-bash test_rdt.sh
-```
-
-### 2. Chạy kiểm thử tự động với CTest
+### 1. Chạy kiểm thử tự động với CTest
 ```bash
 cd build
 ctest --output-on-failure
 ```
+
+### 2. Benchmark Độc lập Tầng RDT UDP (`rdt_file_server` & `rdt_file_client`)
+Để kiểm thử trực tiếp tầng RDT UDP Sliding Window độc lập với kênh TCP FTP:
+
+- **Terminal 1 (Server RDT nhận file):**
+  ```bash
+  ./build/rdt_file_server <listen_port> <output_file_path>
+  # Ví dụ:
+  ./build/rdt_file_server 9000 received_test.bin
+  ```
+
+- **Terminal 2 (Client RDT gửi file):**
+  ```bash
+  ./build/rdt_file_client <server_ip> <server_port> <input_file_path> [window_size]
+  # Ví dụ (window size = 16):
+  ./build/rdt_file_client 127.0.0.1 9000 sample_5mb.bin 16
+  ```
 
 ### 3. Kết quả đo đạc Thông lượng thực tế (Localhost Benchmark)
 
@@ -330,14 +346,8 @@ ctest --output-on-failure
 Hybrid-FTP/
 ├── CMakeLists.txt                      # Cấu hình biên dịch chính của CMake
 ├── README.md                           # Tài liệu tổng quan và hướng dẫn sử dụng dự án
-├── test_rdt.sh                         # Script kiểm thử nghiệm thu tự động RDT
-├── docs/                               # Tài liệu thiết kế và hình ảnh minh họa
-│   └── Technical Report.pdf
-│         
-├── phanchiacongviec/                   # Bảng phân công nhiệm vụ và checklist tiến độ
-│   ├── Checklist_stage3.md             # Checklist hoàn thành Giai đoạn 3
-│   ├── Checklist_stage4.md             # Kế hoạch báo cáo & diễn tập bảo vệ Giai đoạn 4
-│   └── KeHoach_VanDap_LiveCoding.md    # Tài liệu ôn tập lý thuyết & live coding
+├── docs/                               # Tài liệu thiết kế và báo cáo kỹ thuật
+│   └── Technical Report.pdf            # Báo cáo kỹ thuật chi tiết đồ án
 ├── server_storage/                     # Thư mục gốc lưu trữ tệp trên Server (Sandbox)
 ├── src/
 │   ├── rdt/                            # Module truyền dữ liệu tin cậy RDT qua UDP
@@ -348,7 +358,7 @@ Hybrid-FTP/
 │   │   ├── ReliableTransfer.h          # Lớp giao diện wrapper truyền tệp/buffer
 │   │   ├── ReliableTransfer.cpp        # Định nghĩa các hàm truyền tải bậc cao
 │   │   ├── UDPSocket.h                 # Lớp bao bọc (wrapper) socket UDP POSIX
-│   │   ├── UDPSocket.cpp               # Cài đặt socket UDP gửi/nhận không đồng bộ
+│   │   ├── UDPSocket.cpp               # Cài đặt socket UDP gửi/nhận
 │   │   ├── FileTransferServer.cpp      # Chương trình Server nghiệm thu truyền tệp RDT
 │   │   └── FileTransferClient.cpp      # Chương trình Client nghiệm thu truyền tệp RDT
 │   ├── server/                         # Module FTP Server (Kênh điều khiển TCP)
