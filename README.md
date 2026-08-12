@@ -332,7 +332,7 @@ Hybrid-FTP/
 ├── README.md                           # Tài liệu tổng quan và hướng dẫn sử dụng dự án
 ├── test_rdt.sh                         # Script kiểm thử nghiệm thu tự động RDT
 ├── docs/                               # Tài liệu thiết kế và hình ảnh minh họa
-│   └── Technical Report
+│   └── Technical Report.pdf
 │         
 ├── phanchiacongviec/                   # Bảng phân công nhiệm vụ và checklist tiến độ
 │   ├── Checklist_stage3.md             # Checklist hoàn thành Giai đoạn 3
