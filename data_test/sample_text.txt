@@ -1,0 +1,4 @@
+Hybrid FTP Server - File Transfer Protocol Implementation
+Development Group: Dev1, Dev2, Dev3
+Date: August 2026
+Testing ASCII mode transfer with special chars: café, naïve
