@@ -13,3 +13,7 @@ install_manifest.txt
 *.tar.gz
 *.rar
 *.7z
+
+# Runtime files and uploaded/downloaded test data stay local.
+server_storage/
+session_tracking.log

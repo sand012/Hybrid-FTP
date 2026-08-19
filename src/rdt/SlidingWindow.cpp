@@ -11,6 +11,7 @@
 #include <cmath>
 #include <fstream>
 #include <algorithm>
+#include <limits>
 
 // ============================================================
 //  Helpers nội bộ
@@ -116,6 +117,8 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
     uint32_t base     = 0;  // seq nhỏ nhất chưa ACK
     uint32_t nextSeq  = 0;  // seq kế tiếp sẽ gửi
     int      retryRnd = 0;  // số vòng retransmit liên tiếp
+    uint32_t lastDuplicateAck = std::numeric_limits<uint32_t>::max();
+    int      duplicateAckCount = 0;
 
     while (base < N)
     {
@@ -191,6 +194,15 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
             continue;
         }
 
+        // Ignore datagrams from another endpoint.  This also prevents stale
+        // traffic on a reused UDP socket from moving the current window.
+        if (fromPort != destPort_ || fromIP != destIP_)
+        {
+            printf("[SW-SENDER] ACK tu endpoint la %s:%u, bo qua.\n",
+                   fromIP.c_str(), fromPort);
+            continue;
+        }
+
         uint32_t ackNum    = ackHdr.ackNum;
         uint16_t rxWindow  = ackHdr.windowSize; // flow control từ receiver
 
@@ -202,7 +214,10 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
             recvWindow_ = rxWindow;
 
         // ---- Cumulative ACK hợp lệ → slide cửa sổ ----
-        if (ackNum >= base && ackNum < N)
+        // An ACK is only valid for a segment that has actually been sent.
+        // Without ackNum < nextSeq, a delayed ACK from an earlier transfer can
+        // make the sender skip data in this transfer.
+        if (ackNum >= base && ackNum < nextSeq && ackNum < N)
         {
             uint32_t newAcked = ackNum + 1 - base; // số segment mới được ACK
 
@@ -224,19 +239,43 @@ bool RDTWindowSender::sendData(const uint8_t* data, size_t totalLen)
 
             base     = ackNum + 1;
             retryRnd = 0; // ACK thành công → reset retry
+            duplicateAckCount = 0;
+            lastDuplicateAck = std::numeric_limits<uint32_t>::max();
         }
-        else if (ackNum == N - 1 && base <= ackNum)
+        else if (ackNum < base || ackNum == std::numeric_limits<uint32_t>::max())
         {
-            // Trường hợp cuối
-            uint32_t newAcked = ackNum + 1 - base;
-            for (uint32_t i = 0; i < newAcked; ++i)
+            // Three duplicate cumulative ACKs mean the segment at `base` is
+            // missing.  Retransmit immediately; waiting for a socket timeout
+            // can deadlock because duplicate ACKs keep recvFrom() busy.
+            if (ackNum == lastDuplicateAck)
+                ++duplicateAckCount;
+            else
             {
-                if (cwnd_ < ssthresh_) cwnd_ += 1.0;
-                else                  cwnd_ += 1.0 / cwnd_;
-                cwnd_ = std::min(cwnd_, static_cast<double>(maxWindowSegments_));
+                lastDuplicateAck = ackNum;
+                duplicateAckCount = 1;
             }
-            base = N;
-            retryRnd = 0;
+
+            if (duplicateAckCount >= 3)
+            {
+                ++retryRnd;
+                if (retryRnd > maxRetransmitRounds_)
+                {
+                    fprintf(stderr, "[SW-SENDER] Qua so lan fast retransmit. Huy bo.\n");
+                    return false;
+                }
+
+                ssthresh_ = std::max(cwnd_ / 2.0, 1.0);
+                cwnd_ = 1.0;
+                nextSeq = base;
+                duplicateAckCount = 0;
+                printf("[SW-SENDER] 3 ACK trung -> FAST RETRANSMIT seq=%u (lan %d/%d)\n",
+                       base, retryRnd, maxRetransmitRounds_);
+            }
+        }
+        else if (ackNum >= nextSeq && ackNum < N)
+        {
+            printf("[SW-SENDER] ACK(%u) cho segment chua gui (nextSeq=%u), bo qua.\n",
+                   ackNum, nextSeq);
         }
     }
 
@@ -286,7 +325,14 @@ RDTWindowReceiver::RDTWindowReceiver(UDPSocket& socket, uint16_t advertisedWindo
 // ============================================================
 void RDTWindowReceiver::sendCumulativeAck(const std::string& ip, uint16_t port)
 {
-    uint32_t ackNum = (expectedSeq_ == 0) ? 0 : (expectedSeq_ - 1);
+    // UINT32_MAX means "no DATA segment has been accepted yet".  ACK(0)
+    // cannot be used here because it would incorrectly acknowledge seq=0.
+    // Sending this sentinel is important when seq=0 is lost/corrupt and a
+    // later GBN segment arrives first: the sender must receive a duplicate ACK
+    // and retransmit from base instead of waiting silently for a timeout.
+    uint32_t ackNum = (expectedSeq_ == 0)
+                          ? std::numeric_limits<uint32_t>::max()
+                          : (expectedSeq_ - 1);
 
     CustomUDPHeader ack{};
     ack.seqNum     = 0;
@@ -298,7 +344,16 @@ void RDTWindowReceiver::sendCumulativeAck(const std::string& ip, uint16_t port)
 
     uint8_t buf[CUSTOM_UDP_HEADER_SIZE];
     serializeHeader(ack, buf);
-    socket_.sendTo(buf, sizeof(buf), ip, port);
+    if (ip.empty() || port == 0)
+        return;
+
+    if (socket_.sendTo(buf, sizeof(buf), ip, port) < 0)
+    {
+        std::fprintf(stderr,
+                     "[SW-RECEIVER] Loi gui ACK(%u) den %s:%u\n",
+                     ackNum, ip.c_str(), port);
+        return;
+    }
 
     printf("[SW-RECEIVER] Gui ACK(%u) | advertisedWin=%u\n", ackNum, advertisedWindow_);
 }
@@ -334,8 +389,7 @@ bool RDTWindowReceiver::receiveData(std::vector<uint8_t>& outData,
         {
             // Timeout — gửi lại ACK để kích thích sender gửi tiếp
             printf("[SW-RECEIVER] Timeout hoac goi qua nho. Gui lai ACK.\n");
-            if (expectedSeq_ > 0)
-                sendCumulativeAck(senderIP, senderPort);
+            sendCumulativeAck(senderIP, senderPort);
             continue;
         }
 
@@ -347,8 +401,7 @@ bool RDTWindowReceiver::receiveData(std::vector<uint8_t>& outData,
         if (!verifyChecksum(hdr, payload, payloadLen))
         {
             printf("[SW-RECEIVER] Checksum sai (seq=%u) -> gui lai ACK cu.\n", hdr.seqNum);
-            if (expectedSeq_ > 0)
-                sendCumulativeAck(senderIP, senderPort);
+            sendCumulativeAck(senderIP, senderPort);
             continue;
         }
 
@@ -392,11 +445,13 @@ bool RDTWindowReceiver::receiveData(std::vector<uint8_t>& outData,
         else
         {
             // Gói lệch thứ tự → GBN: bỏ qua, gửi lại ACK của gói cuối đã nhận
-            printf("[SW-RECEIVER] Nhan seq=%u (mong doi=%u) -> Go-Back-N: gui lai ACK(%u)\n",
-                   hdr.seqNum, expectedSeq_,
-                   (expectedSeq_ > 0) ? (expectedSeq_ - 1) : 0u);
-            if (expectedSeq_ > 0)
-                sendCumulativeAck(senderIP, senderPort);
+            if (expectedSeq_ == 0)
+                printf("[SW-RECEIVER] Nhan seq=%u (mong doi=0) -> Go-Back-N: gui ACK chua nhan DATA\n",
+                       hdr.seqNum);
+            else
+                printf("[SW-RECEIVER] Nhan seq=%u (mong doi=%u) -> Go-Back-N: gui lai ACK(%u)\n",
+                       hdr.seqNum, expectedSeq_, expectedSeq_ - 1);
+            sendCumulativeAck(senderIP, senderPort);
         }
     }
 }
