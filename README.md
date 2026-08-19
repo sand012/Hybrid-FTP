@@ -1,6 +1,14 @@
 # Hybrid-FTP — TCP Control & UDP RDT Sliding Window
 
-> **Đồ án Lập trình Socket — Môn Mạng Máy Tính (Computer Networks)**
+<p align="center">
+  <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg?style=for-the-badge&logo=c%2B%2B" alt="C++23" />
+  <img src="https://img.shields.io/badge/CMake-3.10+-064F8C.svg?style=for-the-badge&logo=cmake" alt="CMake" />
+  <img src="https://img.shields.io/badge/OpenSSL-3.0+-721412.svg?style=for-the-badge&logo=openssl" alt="OpenSSL" />
+  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20WSL2-FCC624.svg?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
+  <img src="https://img.shields.io/badge/Standard-RFC%20959-success.svg?style=for-the-badge" alt="RFC 959" />
+</p>
+
+> **Đồ án Lập trình Socket — Môn Mạng Máy Tính (Computer Networks)**  
 > **Trường Đại học Khoa học Tự nhiên, ĐHQG-HCM (HCMUS)**
 
 ---
@@ -46,8 +54,8 @@ Hệ thống cung cấp giao diện dòng lệnh (CLI) trực quan, hỗ trợ �
 ### 2. Chế độ truyền dữ liệu (Transfer Modes & Types)
 
 - **Active Mode (`PORT`) & Passive Mode (`PASV`):** Hỗ trợ linh hoạt cả hai cơ chế thỏa thuận cổng truyền tải dữ liệu.
-- **Data Representation (`TYPE`):**
-  - `TYPE A`: Dạng văn bản (ASCII Mode) có chuẩn hóa ký tự xuống dòng.
+- **Data Representation (`TYPE`):** 
+  - `TYPE A`: Dạng văn bản (ASCII Mode) có chuẩn hóa ký tự xuống dòng (`\r\n` $\leftrightarrow$ `\n`).
   - `TYPE I`: Dạng nhị phân nguyên bản (Binary / Image Mode).
 - **Transmission Mode (`MODE`):**
   - `MODE S` (Stream): Truyền luồng byte liên tục.
@@ -76,14 +84,14 @@ Mỗi gói tin dữ liệu hoặc ACK trên kênh UDP đều được đóng gó
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-| Trường (Field) | Kích thước | Mô tả chi tiết                                                                                      |
-| :--------------- | :-----------: | :----------------------------------------------------------------------------------------------------- |
-| `seqNum`       |    4 bytes    | Số thứ tự tuần tự của gói tin (tính theo segment index, bắt đầu từ 0)                      |
-| `ackNum`       |    4 bytes    | Số thứ tự gói tin tiếp theo mà bên nhận đang chờ đợi (Cumulative ACK)                      |
-| `payloadLen`   |    2 bytes    | Độ dài dữ liệu payload thực tế trong gói tin (tối đa bằng MSS)                              |
-| `windowSize`   |    2 bytes    | Kích thước cửa sổ nhận còn trống (`rwnd`) dùng cho **Kiểm soát luồng**             |
-| `checksum`     |    2 bytes    | Mã kiểm tra lỗi 16-bit Internet Checksum (tính trên cả Header + Payload)                         |
-| `flags`        |    1 byte    | Các cờ điều khiển:`SYN` (0x01), `ACK` (0x02), `DATA` (0x04), `FIN` (0x08), `NAK` (0x10) |
+| Trường (Field) | Kích thước | Mô tả chi tiết |
+| :--- | :---: | :--- |
+| `seqNum` | 4 bytes | Số thứ tự tuần tự của gói tin (tính theo segment index, bắt đầu từ 0) |
+| `ackNum` | 4 bytes | Số thứ tự gói tin tiếp theo mà bên nhận đang chờ đợi (Cumulative ACK) |
+| `payloadLen` | 2 bytes | Độ dài dữ liệu payload thực tế trong gói tin (tối đa bằng MSS = 1400 bytes) |
+| `windowSize` | 2 bytes | Kích thước cửa sổ nhận còn trống (`rwnd`) dùng cho **Kiểm soát luồng** |
+| `checksum` | 2 bytes | Mã kiểm tra lỗi 16-bit Internet Checksum (tính trên cả Header + Payload) |
+| `flags` | 1 byte | Các cờ điều khiển: `SYN` (0x01), `ACK` (0x02), `DATA` (0x04), `FIN` (0x08), `NAK` (0x10) |
 
 ### 2. Các giải thuật truyền tin cậy
 
@@ -116,36 +124,38 @@ Mỗi gói tin dữ liệu hoặc ACK trên kênh UDP đều được đóng gó
 
 ## 📋 Danh sách Lệnh FTP Hỗ trợ (Command Reference)
 
-| Nhóm chức năng                 | Lệnh              | Kênh truyền | Cú pháp                    | Mô tả chi tiết                                                      |
-| :-------------------------------- | :----------------- | :-----------: | :--------------------------- | :--------------------------------------------------------------------- |
-| **Xác thực & Phiên**     | `USER`           |      TCP      | `USER <username>`          | Khai báo tên tài khoản người dùng                               |
-|                                   | `PASS`           |      TCP      | `PASS <password>`          | Khai báo mật khẩu xác thực phiên                                 |
-|                                   | `QUIT`           |      TCP      | `QUIT`                     | Đóng phiên làm việc và ngắt kết nối an toàn                  |
-|                                   | `NOOP`           |      TCP      | `NOOP`                     | Kiểm tra trạng thái hoạt động (Keep-alive)                       |
-|                                   | `HELP`           |      TCP      | `HELP [command]`           | Hiển thị thông tin trợ giúp lệnh                                 |
-|                                   | `STAT`           |      TCP      | `STAT [path]`              | Xem trạng thái kết nối / thông tin đường dẫn                  |
-|                                   | `ABOR`           |      TCP      | `ABOR`                     | Hủy bỏ tác vụ truyền nhận dữ liệu đang thực thi              |
-| **Cấu hình truyền tải** | `TYPE`           |      TCP      | `TYPE <A\|I>`               | Đặt kiểu truyền: ASCII (`A`) hoặc Binary (`I`)                |
-|                                   | `MODE`           |      TCP      | `MODE <S\|B\|C>`             | Đặt chế độ: Stream (`S`), Block (`B`), Compressed (`C`)     |
-|                                   | `PASV`           |      TCP      | `PASV`                     | Yêu cầu server mở cổng lắng nghe Passive Data Channel             |
-|                                   | `PORT`           |      TCP      | `PORT <h1,h2,h3,h4,p1,p2>` | Chỉ định địa chỉ IP và Port của Client cho Active Data Channel |
-| **Quản lý Thư mục**     | `PWD`            |      TCP      | `PWD`                      | In đường dẫn thư mục làm việc hiện tại trên server          |
-|                                   | `CWD`            |      TCP      | `CWD <dir>`                | Chuyển đến thư mục làm việc chỉ định                         |
-|                                   | `CDUP`           |      TCP      | `CDUP`                     | Di chuyển lên thư mục cha                                          |
-|                                   | `MKD`            |      TCP      | `MKD <dir>`                | Tạo thư mục mới trên server                                       |
-|                                   | `RMD`            |      TCP      | `RMD <dir>`                | Xóa thư mục rỗng trên server                                      |
-| **Thao tác Tệp tin**      | `SIZE`           |      TCP      | `SIZE <file>`              | Lấy kích thước tệp tin tính theo byte                            |
-|                                   | `MDTM`           |      TCP      | `MDTM <file>`              | Lấy thời gian chỉnh sửa cuối cùng (định dạng YYYYMMDDhhmmss)  |
-|                                   | `DELE`           |      TCP      | `DELE <file>`              | Xóa tệp tin trên server                                             |
-|                                   | `RNFR`           |      TCP      | `RNFR <file>`              | Chỉ định tệp/thư mục nguồn cần đổi tên                      |
-|                                   | `RNTO`           |      TCP      | `RNTO <file>`              | Chỉ định tên đích mới để hoàn tất đổi tên                |
-|                                   | `HASH`           |      TCP      | `HASH <file>`              | Tính và trả về mã băm SHA-256 của tệp tin trên server         |
-| **Truyền nhận Dữ liệu** | `LIST`           |   UDP (RDT)   | `LIST [path]`              | Liệt kê chi tiết danh sách tệp và thư mục (dạng`ls -l`)     |
-|                                   | `NLST`           |   UDP (RDT)   | `NLST [path]`              | Liệt kê danh sách tên tệp rút gọn                               |
-|                                   | `RETR` / `GET` |   UDP (RDT)   | `RETR <remote> [local]`    | Tải tệp tin từ Server về máy cục bộ                             |
-|                                   | `STOR` / `PUT` |   UDP (RDT)   | `STOR <local> [remote]`    | Tải tệp tin từ máy cục bộ lên Server                            |
-|                                   | `STOU`           |   UDP (RDT)   | `STOU <local>`             | Tải tệp lên server với tên tự sinh duy nhất (tránh ghi đè)   |
-|                                   | `APPE`           |   UDP (RDT)   | `APPE <local> <remote>`    | Ghi nối (append) nội dung tệp vào tệp có sẵn trên server       |
+| Nhóm chức năng | Lệnh | Kênh truyền | Cú pháp | Mô tả chi tiết |
+| :--- | :--- | :---: | :--- | :--- |
+| **Xác thực & Phiên** | `USER` | TCP | `USER <username>` | Khai báo tên tài khoản người dùng |
+| | `PASS` | TCP | `PASS <password>` | Khai báo mật khẩu xác thực phiên |
+| | `QUIT` | TCP | `QUIT` | Đóng phiên làm việc và ngắt kết nối an toàn |
+| | `NOOP` | TCP | `NOOP` | Kiểm tra trạng thái hoạt động (Keep-alive) |
+| | `HELP` | TCP | `HELP [command]` | Hiển thị thông tin trợ giúp lệnh |
+| | `STAT` | TCP | `STAT [path]` | Xem trạng thái kết nối / thông tin đường dẫn |
+| | `ABOR` | TCP | `ABOR` | Hủy bỏ tác vụ truyền nhận dữ liệu đang thực thi |
+| **Cấu hình truyền tải** | `TYPE` | TCP | `TYPE <A\|I>` | Đặt kiểu truyền: ASCII (`A`) hoặc Binary (`I`) |
+| | `MODE` | TCP | `MODE <S\|B\|C>` | Đặt chế độ: Stream (`S`), Block (`B`), Compressed (`C`) |
+| | `PASV` | TCP | `PASV` | Yêu cầu server mở cổng lắng nghe Passive Data Channel |
+| | `PORT` | TCP | `PORT <h1,h2,h3,h4,p1,p2>` | Chỉ định địa chỉ IP và Port của Client cho Active Data Channel |
+| **Quản lý Thư mục** | `PWD` | TCP | `PWD` | In đường dẫn thư mục làm việc hiện tại trên server |
+| | `CWD` | TCP | `CWD <dir>` | Chuyển đến thư mục làm việc chỉ định |
+| | `CDUP` | TCP | `CDUP` | Di chuyển lên thư mục cha |
+| | `MKD` | TCP | `MKD <dir>` | Tạo thư mục mới trên server |
+| | `RMD` | TCP | `RMD <dir>` | Xóa thư mục rỗng trên server |
+| **Thao tác Tệp tin** | `SIZE` | TCP | `SIZE <file>` | Lấy kích thước tệp tin tính theo byte |
+| | `MDTM` | TCP | `MDTM <file>` | Lấy thời gian chỉnh sửa cuối cùng (định dạng `YYYYMMDDhhmmss`) |
+| | `DELE` | TCP | `DELE <file>` | Xóa tệp tin trên server |
+| | `RNFR` | TCP | `RNFR <file>` | Chỉ định tệp/thư mục nguồn cần đổi tên |
+| | `RNTO` | TCP | `RNTO <file>` | Chỉ định tên đích mới để hoàn tất đổi tên |
+| | `HASH` | TCP | `HASH <file>` | Tính và trả về mã băm SHA-256 của tệp tin trên server |
+| **Truyền nhận Dữ liệu** | `LIST` | UDP (RDT) | `LIST [path]` | Liệt kê chi tiết danh sách tệp và thư mục (dạng `ls -l`) |
+| | `NLST` | UDP (RDT) | `NLST [path]` | Liệt kê danh sách tên tệp rút gọn |
+| | `RETR` / `GET` | UDP (RDT) | `RETR <remote> [local]` | Tải tệp tin từ Server về máy cục bộ |
+| | `STOR` / `PUT` | UDP (RDT) | `STOR <local> [remote]` | Tải tệp tin từ máy cục bộ lên Server |
+| | `STOU` | UDP (RDT) | `STOU <local>` | Tải tệp lên server với tên tự sinh duy nhất (tránh ghi đè) |
+| | `APPE` | UDP (RDT) | `APPE <local> <remote>` | Ghi nối (append) nội dung tệp vào tệp có sẵn trên server |
+
+> **Giới hạn hiện tại:** `ABOR` được kiểm tra trong các luồng truyền tệp RDT. Việc hủy `LIST`/`NLST` và giai đoạn chờ kết nối Passive chưa được bảo đảm tức thời; các trường hợp này có thể chờ hết timeout.
 
 ---
 
@@ -301,20 +311,28 @@ ftp> APPE append_chunk.txt target_file.txt
 
 ## 🧪 Kiểm thử Tự động & Đánh giá Hiệu năng (Benchmarking)
 
-### 1. Chạy toàn bộ Test Suite RDT tự động
-
-Dự án cung cấp kịch bản kiểm thử toàn diện `test_rdt.sh` kiểm tra nhiều kích thước tệp (từ vài chục Byte đến hàng trăm MB) và nhiều kích cỡ cửa sổ Sliding Window:
-
-```bash
-bash test_rdt.sh
-```
-
-### 2. Chạy kiểm thử tự động với CTest
-
+### 1. Chạy kiểm thử tự động với CTest
 ```bash
 cd build
 ctest --output-on-failure
 ```
+
+### 2. Benchmark Độc lập Tầng RDT UDP (`rdt_file_server` & `rdt_file_client`)
+Để kiểm thử trực tiếp tầng RDT UDP Sliding Window độc lập với kênh TCP FTP:
+
+- **Terminal 1 (Server RDT nhận file):**
+  ```bash
+  ./build/rdt_file_server <listen_port> <output_file_path>
+  # Ví dụ:
+  ./build/rdt_file_server 9000 received_test.bin
+  ```
+
+- **Terminal 2 (Client RDT gửi file):**
+  ```bash
+  ./build/rdt_file_client <server_ip> <server_port> <input_file_path> [window_size]
+  # Ví dụ (window size = 16):
+  ./build/rdt_file_client 127.0.0.1 9000 sample_5mb.bin 16
+  ```
 
 ### 3. Kết quả đo đạc Thông lượng thực tế (Localhost Benchmark)
 
@@ -334,18 +352,12 @@ ctest --output-on-failure
 
 ## 📁 Cấu trúc Thư mục Dự án
 
-```
+```structure
 Hybrid-FTP/
 ├── CMakeLists.txt                      # Cấu hình biên dịch chính của CMake
 ├── README.md                           # Tài liệu tổng quan và hướng dẫn sử dụng dự án
-├── test_rdt.sh                         # Script kiểm thử nghiệm thu tự động RDT
-├── docs/                               # Tài liệu thiết kế và hình ảnh minh họa
-│   └── image/
-│       └── Section7_AppDemoEvidence/   # Ảnh chụp minh chứng nghiệm thu thực tế
-├── phanchiacongviec/                   # Bảng phân công nhiệm vụ và checklist tiến độ
-│   ├── Checklist_stage3.md             # Checklist hoàn thành Giai đoạn 3
-│   ├── Checklist_stage4.md             # Kế hoạch báo cáo & diễn tập bảo vệ Giai đoạn 4
-│   └── KeHoach_VanDap_LiveCoding.md    # Tài liệu ôn tập lý thuyết & live coding
+├── docs/                               # Tài liệu thiết kế và báo cáo kỹ thuật
+│   └── Technical Report.pdf            # Báo cáo kỹ thuật chi tiết đồ án
 ├── server_storage/                     # Thư mục gốc lưu trữ tệp trên Server (Sandbox)
 ├── src/
 │   ├── rdt/                            # Module truyền dữ liệu tin cậy RDT qua UDP
@@ -356,7 +368,7 @@ Hybrid-FTP/
 │   │   ├── ReliableTransfer.h          # Lớp giao diện wrapper truyền tệp/buffer
 │   │   ├── ReliableTransfer.cpp        # Định nghĩa các hàm truyền tải bậc cao
 │   │   ├── UDPSocket.h                 # Lớp bao bọc (wrapper) socket UDP POSIX
-│   │   ├── UDPSocket.cpp               # Cài đặt socket UDP gửi/nhận không đồng bộ
+│   │   ├── UDPSocket.cpp               # Cài đặt socket UDP gửi/nhận
 │   │   ├── FileTransferServer.cpp      # Chương trình Server nghiệm thu truyền tệp RDT
 │   │   └── FileTransferClient.cpp      # Chương trình Client nghiệm thu truyền tệp RDT
 │   ├── server/                         # Module FTP Server (Kênh điều khiển TCP)

@@ -1115,6 +1115,18 @@ static bool handle_command(int fd, const std::string &line,
     });
 
     if (session.dataMode == DataMode::ACTIVE) {
+      // Tell the active client which ephemeral server endpoint should receive
+      // this upload. The datagram also verifies the advertised PORT endpoint.
+      uint8_t knock[CUSTOM_UDP_HEADER_SIZE]{};
+      if (dataSocket->sendTo(knock, sizeof(knock), peerIP, peerPort) < 0) {
+        if (ownsSocket) {
+          dataSocket->close();
+          delete dataSocket;
+        }
+        send_reply(fd, "425 Cannot reach active data endpoint.\r\n");
+        return false;
+      }
+
       // Active: receive into buffer then write
       std::vector<uint8_t> buf;
       bool ok = receiver.receiveBuffer(buf);

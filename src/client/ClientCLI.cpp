@@ -144,6 +144,57 @@ uint16_t ClientCLI::parsePasvReply(
     return static_cast<uint16_t>((p1 << 8) | p2);
 }
 
+// Bind the UDP endpoint before advertising it to the server. Keeping this
+// socket open is what makes PORT an actual active data endpoint.
+std::string ClientCLI::handlePort(const std::string &commandLine)
+{
+    std::istringstream input(commandLine);
+    std::string command;
+    std::string argument;
+    input >> command >> argument;
+
+    unsigned int h1, h2, h3, h4, p1, p2;
+    char trailing;
+    if (std::sscanf(argument.c_str(), "%u,%u,%u,%u,%u,%u%c",
+                    &h1, &h2, &h3, &h4, &p1, &p2, &trailing) != 6 ||
+        h1 > 255 || h2 > 255 || h3 > 255 || h4 > 255 ||
+        p1 > 255 || p2 > 255)
+    {
+        return "Error: PORT requires h1,h2,h3,h4,p1,p2 (0-255).";
+    }
+
+    const uint16_t port = static_cast<uint16_t>((p1 << 8) | p2);
+    if (port == 0)
+        return "Error: PORT cannot advertise port 0.";
+
+    std::unique_ptr<UDPSocket> candidate;
+    if (!m_activeSocket || m_activePort != port)
+    {
+        candidate = std::make_unique<UDPSocket>();
+        try
+        {
+            candidate->open();
+            candidate->bind(port);
+            candidate->setRecvTimeout(15000);
+        }
+        catch (const std::exception &e)
+        {
+            return std::string("Error: Cannot prepare active UDP port: ") +
+                   e.what();
+        }
+    }
+
+    const std::string reply = m_sendCommand(commandLine);
+    if (reply.rfind("200", 0) != 0)
+        return reply;
+
+    if (candidate)
+        m_activeSocket = std::move(candidate);
+    m_activePort = port;
+    m_dataMode = DataMode::Active;
+    return reply;
+}
+
 // ============================================================
 // RETR
 //
@@ -170,39 +221,40 @@ std::string ClientCLI::handleRetr(
     const std::string &remoteFile,
     const std::string &localFile)
 {
+    const bool active =
+        m_dataMode == DataMode::Active && m_activeSocket;
+    std::string serverIP = m_serverHost;
+    uint16_t dataPort = m_activePort;
+
     // ========================================================
     // 1. PASV
     // ========================================================
-    std::string pasvReply =
-        m_sendCommand("PASV");
-
-    if (pasvReply.empty() ||
-        pasvReply.rfind("227", 0) != 0)
+    if (!active)
     {
-        return "Error: PASV failed: " + pasvReply;
-    }
+        std::string pasvReply = m_sendCommand("PASV");
 
-    std::string serverIP;
+        if (pasvReply.empty() || pasvReply.rfind("227", 0) != 0)
+            return "Error: PASV failed: " + pasvReply;
 
-    uint16_t pasvPort =
-        parsePasvReply(pasvReply, serverIP);
-
-    if (pasvPort == 0)
-    {
-        return "Error: Cannot parse PASV reply: " +
-               pasvReply;
+        dataPort = parsePasvReply(pasvReply, serverIP);
+        if (dataPort == 0)
+            return "Error: Cannot parse PASV reply: " + pasvReply;
     }
 
     // ========================================================
     // 2. Mở UDP socket phía client
     // ========================================================
-    UDPSocket udp;
+    UDPSocket passiveSocket;
+    UDPSocket *udp = active ? m_activeSocket.get() : &passiveSocket;
 
     try
     {
-        udp.open();
-        udp.bind(0);
-        udp.setRecvTimeout(15000);
+        if (!active)
+        {
+            udp->open();
+            udp->bind(0);
+            udp->setRecvTimeout(15000);
+        }
     }
     catch (const std::exception &e)
     {
@@ -217,13 +269,11 @@ std::string ClientCLI::handleRetr(
     // Server đang kiểm tra packet phải >=
     // CUSTOM_UDP_HEADER_SIZE.
     // ========================================================
-    uint8_t knock[CUSTOM_UDP_HEADER_SIZE]{};
-
-    udp.sendTo(
-        knock,
-        sizeof(knock),
-        serverIP,
-        pasvPort);
+    if (!active)
+    {
+        uint8_t knock[CUSTOM_UDP_HEADER_SIZE]{};
+        udp->sendTo(knock, sizeof(knock), serverIP, dataPort);
+    }
 
     // ========================================================
     // 4. Gửi RETR
@@ -244,17 +294,18 @@ std::string ClientCLI::handleRetr(
         return retrReply;
     }
 
-    std::printf(
-        "[CLIENT] Nhan file '%s' <- '%s' tu %s:%u\n",
-        localFile.c_str(),
-        remoteFile.c_str(),
-        serverIP.c_str(),
-        pasvPort);
+    if (active)
+        std::printf("[CLIENT] Nhan file '%s' <- '%s' qua active port %u\n",
+                    localFile.c_str(), remoteFile.c_str(), dataPort);
+    else
+        std::printf("[CLIENT] Nhan file '%s' <- '%s' tu %s:%u\n",
+                    localFile.c_str(), remoteFile.c_str(), serverIP.c_str(),
+                    dataPort);
 
     // ========================================================
     // 5. Nhận dữ liệu bằng RDT
     // ========================================================
-    RDTReceiver receiver(udp);
+    RDTReceiver receiver(*udp);
     receiver.setTimeoutMs(250);
     receiver.setCancellationCallback([this]() {
         if (!m_aborted.load())
@@ -358,6 +409,8 @@ std::string ClientCLI::handleStor(
     bool unique,
     bool append)
 {
+    const bool active =
+        m_dataMode == DataMode::Active && m_activeSocket;
     // ========================================================
     // 1. Đọc file local
     // ========================================================
@@ -411,27 +464,19 @@ std::string ClientCLI::handleStor(
     // ========================================================
     // 2. PASV
     // ========================================================
-    std::string pasvReply =
-        m_sendCommand("PASV");
+    std::string serverIP = m_serverHost;
+    uint16_t dataPort = m_activePort;
 
-    if (pasvReply.empty() ||
-        pasvReply.rfind("227", 0) != 0)
+    if (!active)
     {
-        return "Error: PASV failed: " +
-               pasvReply;
-    }
+        std::string pasvReply = m_sendCommand("PASV");
 
-    std::string serverIP;
+        if (pasvReply.empty() || pasvReply.rfind("227", 0) != 0)
+            return "Error: PASV failed: " + pasvReply;
 
-    uint16_t pasvPort =
-        parsePasvReply(
-            pasvReply,
-            serverIP);
-
-    if (pasvPort == 0)
-    {
-        return "Error: Cannot parse PASV reply: " +
-               pasvReply;
+        dataPort = parsePasvReply(pasvReply, serverIP);
+        if (dataPort == 0)
+            return "Error: Cannot parse PASV reply: " + pasvReply;
     }
 
     // ========================================================
@@ -475,23 +520,32 @@ std::string ClientCLI::handleStor(
         return openingReply;
     }
 
-    std::printf(
-        "[CLIENT] Gui file '%s' -> '%s' den %s:%u\n",
-        localFile.c_str(),
-        remoteFile.c_str(),
-        serverIP.c_str(),
-        pasvPort);
-
     // ========================================================
     // 5. Mở UDP socket
     // ========================================================
-    UDPSocket udp;
+    UDPSocket passiveSocket;
+    UDPSocket *udp = active ? m_activeSocket.get() : &passiveSocket;
 
     try
     {
-        udp.open();
-        udp.bind(0);
-        udp.setRecvTimeout(15000);
+        if (!active)
+        {
+            udp->open();
+            udp->bind(0);
+            udp->setRecvTimeout(15000);
+        }
+        else
+        {
+            uint8_t knock[CUSTOM_UDP_HEADER_SIZE + 64];
+            std::string fromIP;
+            uint16_t fromPort = 0;
+            const int received = udp->recvFrom(
+                knock, sizeof(knock), fromIP, fromPort);
+            if (received < static_cast<int>(CUSTOM_UDP_HEADER_SIZE))
+                return "Error: Active data handshake failed.";
+            serverIP = fromIP;
+            dataPort = fromPort;
+        }
     }
     catch (const std::exception &e)
     {
@@ -500,13 +554,17 @@ std::string ClientCLI::handleStor(
                e.what();
     }
 
+    std::printf("[CLIENT] Gui file '%s' -> '%s' den %s:%u\n",
+                localFile.c_str(), remoteFile.c_str(), serverIP.c_str(),
+                dataPort);
+
     // ========================================================
     // 6. Gửi dữ liệu bằng RDT
     // ========================================================
     RDTSender sender(
-        udp,
+        *udp,
         serverIP,
-        pasvPort);
+        dataPort);
     sender.setCancellationCallback([this]() {
         if (!m_aborted.load())
             return false;
@@ -518,7 +576,8 @@ std::string ClientCLI::handleStor(
         TransferModeCodec::encode(fileBuffer, m_transferMode);
     bool ok = sender.sendBuffer(encoded.data(), encoded.size());
 
-    udp.close();
+    if (!active)
+        udp->close();
 
     if (!ok)
     {
@@ -577,41 +636,40 @@ std::string ClientCLI::handleList(
     const std::string &path,
     bool namesOnly)
 {
+    const bool active =
+        m_dataMode == DataMode::Active && m_activeSocket;
+    std::string serverIP = m_serverHost;
+    uint16_t dataPort = m_activePort;
+
     // ========================================================
     // 1. PASV
     // ========================================================
-    std::string pasvReply =
-        m_sendCommand("PASV");
-
-    if (pasvReply.empty() ||
-        pasvReply.rfind("227", 0) != 0)
+    if (!active)
     {
-        return "Error: PASV failed: " +
-               pasvReply;
-    }
+        std::string pasvReply = m_sendCommand("PASV");
 
-    std::string serverIP;
+        if (pasvReply.empty() || pasvReply.rfind("227", 0) != 0)
+            return "Error: PASV failed: " + pasvReply;
 
-    uint16_t pasvPort =
-        parsePasvReply(
-            pasvReply,
-            serverIP);
-
-    if (pasvPort == 0)
-    {
-        return "Error: Cannot parse PASV reply.";
+        dataPort = parsePasvReply(pasvReply, serverIP);
+        if (dataPort == 0)
+            return "Error: Cannot parse PASV reply.";
     }
 
     // ========================================================
     // 2. Mở UDP socket
     // ========================================================
-    UDPSocket udp;
+    UDPSocket passiveSocket;
+    UDPSocket *udp = active ? m_activeSocket.get() : &passiveSocket;
 
     try
     {
-        udp.open();
-        udp.bind(0);
-        udp.setRecvTimeout(15000);
+        if (!active)
+        {
+            udp->open();
+            udp->bind(0);
+            udp->setRecvTimeout(15000);
+        }
     }
     catch (const std::exception &e)
     {
@@ -625,13 +683,11 @@ std::string ClientCLI::handleList(
     //
     // Server dùng datagram này để học IP + port của client.
     // ========================================================
-    uint8_t knock[CUSTOM_UDP_HEADER_SIZE]{};
-
-    udp.sendTo(
-        knock,
-        sizeof(knock),
-        serverIP,
-        pasvPort);
+    if (!active)
+    {
+        uint8_t knock[CUSTOM_UDP_HEADER_SIZE]{};
+        udp->sendTo(knock, sizeof(knock), serverIP, dataPort);
+    }
 
     // ========================================================
     // 4. Tạo command LIST / NLST
@@ -667,7 +723,7 @@ std::string ClientCLI::handleList(
     // ========================================================
     // 6. Nhận directory data bằng Reliable UDP
     // ========================================================
-    RDTReceiver receiver(udp);
+    RDTReceiver receiver(*udp);
     receiver.setTimeoutMs(250);
     receiver.setCancellationCallback([this]() {
         if (!m_aborted.load())
@@ -805,6 +861,12 @@ void ClientCLI::run()
 
         const std::string verb =
             toUpperFirstWord(line);
+
+        if (verb == "PORT")
+        {
+            std::cout << handlePort(line) << "\n";
+            continue;
+        }
 
         // ====================================================
         // RETR / GET
@@ -1000,6 +1062,13 @@ void ClientCLI::run()
 
         // Change local state only after the server accepted the command, so
         // both sides always apply the same data-channel representation.
+        if (verb == "PASV" && reply.rfind("227", 0) == 0)
+        {
+            m_dataMode = DataMode::Passive;
+            m_activeSocket.reset();
+            m_activePort = 0;
+        }
+
         if (reply.rfind("200", 0) == 0)
         {
             std::istringstream stateCommand(line);
